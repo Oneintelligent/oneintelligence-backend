@@ -1,6 +1,7 @@
 """
 Django settings for OneIntelligence project.
 """
+import os
 
 from pathlib import Path
 
@@ -76,6 +77,7 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = 'static/'
+STATIC_ROOT = os.path.join(BASE_DIR, 'static')  # <-- this is required for collectstatic
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 

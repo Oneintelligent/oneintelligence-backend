@@ -83,6 +83,10 @@ echo "✅ Python dependencies installed."
 
 # --- Step 6: Django migrations & collect static ---
 export DJANGO_SETTINGS_MODULE=$DJANGO_SETTINGS_MODULE
+
+# Ensure STATIC_ROOT exists (required for collectstatic)
+mkdir -p "$PROJECT_DIR/static"
+
 python manage.py collectstatic --noinput
 python manage.py makemigrations
 python manage.py migrate
