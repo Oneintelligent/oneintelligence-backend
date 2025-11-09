@@ -11,7 +11,7 @@ DB_USER="oneintelligence"
 DB_PASS="Onei@123"
 DJANGO_SETTINGS_MODULE="config.settings"
 WSGI_MODULE="config.wsgi:application"
-EC2_PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
+EC2_PUBLIC_IP="3.109.211.100"  # Your actual server IP
 
 echo "🚀 Starting $PROJECT_NAME production setup on Ubuntu..."
 
@@ -103,7 +103,7 @@ NGINX_CONF="/etc/nginx/sites-available/$PROJECT_NAME"
 sudo bash -c "cat > $NGINX_CONF" <<EOL
 server {
     listen 80;
-    server_name _;  # wildcard to avoid errors
+    server_name $EC2_PUBLIC_IP;
 
     location = /favicon.ico { access_log off; log_not_found off; }
     location /static/ {
