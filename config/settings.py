@@ -22,6 +22,8 @@ INSTALLED_APPS = [
     'app.onboarding.users',
     'app.onboarding.companies',
     'app.onboarding.subscriptions',
+    'app.onboarding.products',
+
 
 ]
 
