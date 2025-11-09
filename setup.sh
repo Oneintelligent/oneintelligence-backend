@@ -87,7 +87,7 @@ echo "✅ Python dependencies installed."
 # --- Step 6: Django migrations & collect static ---
 export DJANGO_SETTINGS_MODULE=$DJANGO_SETTINGS_MODULE
 
-# Ensure STATIC_ROOT exists (required for collectstatic)
+# Ensure STATIC_ROOT exists
 mkdir -p "$STATIC_DIR"
 
 python manage.py collectstatic --noinput
@@ -108,7 +108,7 @@ User=ubuntu
 Group=www-data
 WorkingDirectory=$PROJECT_DIR
 Environment="DJANGO_SETTINGS_MODULE=$DJANGO_SETTINGS_MODULE"
-ExecStart=$PROJECT_DIR/venv/bin/gunicorn --workers 3 --bind unix:$PROJECT_DIR/$PROJECT_NAME.sock config.wsgi:application
+ExecStart=$PROJECT_DIR/venv/bin/gunicorn --workers 3 --bind 127.0.0.1:$APP_PORT config.wsgi:application
 
 [Install]
 WantedBy=multi-user.target
@@ -135,7 +135,7 @@ server {
 
     location / {
         include proxy_params;
-        proxy_pass http://unix:$PROJECT_DIR/$PROJECT_NAME.sock;
+        proxy_pass http://127.0.0.1:$APP_PORT;
     }
 }
 EOL
