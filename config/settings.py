@@ -44,7 +44,7 @@ MIDDLEWARE = [
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",  # Next.js frontend
     "http://192.168.1.9:3000",
-    "http://3.109.211.100"
+    "http://13.235.73.171"
 ]
 
 # Optional: allow cookies (for CSRF/auth)
