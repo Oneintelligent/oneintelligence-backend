@@ -41,6 +41,12 @@ if [ ! -f "$PROJECT_DIR/manage.py" ]; then
     exit 1
 fi
 
+# --- Step 4a: Pull latest code from Git ---
+cd $PROJECT_DIR
+echo "📦 Pulling latest code from Git..."
+git fetch origin main
+git reset --hard origin/main
+
 cd $PROJECT_DIR
 
 # --- Step 5: Create/activate virtual environment ---
