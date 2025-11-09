@@ -14,6 +14,9 @@ urlpatterns = [
     # Product routes from router
     path('api/products/', include('app.onboarding.products.urls')),
 
+    # Oneintelligent AI endpoints
+    path('api/oneintelligentai/', include('app.oneintelligentai.urls')),
+
     # API docs
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
     path('api/schema/swagger-ui/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),

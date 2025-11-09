@@ -25,6 +25,7 @@ INSTALLED_APPS = [
     'app.onboarding.companies',
     'app.onboarding.subscriptions',
     'app.onboarding.products',
+    'app.oneintelligentai',  # <--- THIS LINE IS CRUCIAL
     'corsheaders',
 
 
@@ -49,6 +50,8 @@ CORS_ALLOWED_ORIGINS = [
 
 # Optional: allow cookies (for CSRF/auth)
 CORS_ALLOW_CREDENTIALS = True
+
+CORS_ALLOW_ALL_ORIGINS = True
 
 
 ROOT_URLCONF = 'config.urls'
