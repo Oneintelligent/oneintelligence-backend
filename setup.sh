@@ -2,7 +2,7 @@
 set -e
 
 # -------------------------------
-# OneIntelligence Backend EC2 Full Deployment Script (Ubuntu)
+# OneIntelligence Backend EC2 Deployment Script (Ubuntu)
 # -------------------------------
 
 # --- Configuration ---
@@ -14,18 +14,15 @@ DB_USER="oneintelligence"
 DB_PASS="Onei@123"
 
 DJANGO_SETTINGS_MODULE="config.settings"
-APP_PORT=8000
-SERVER_NAME="13.201.192.254"
-
 STATIC_DIR="$PROJECT_DIR/static"
 
-echo "🚀 Starting $PROJECT_NAME full deployment..."
+echo "🚀 Starting $PROJECT_NAME deployment..."
 
 # --- Step 0: Update system ---
 sudo apt update -y && sudo apt upgrade -y
 
 # --- Step 1: Install dependencies ---
-sudo apt install -y python3 python3-pip python3-venv postgresql postgresql-contrib nginx git curl ufw
+sudo apt install -y python3 python3-pip python3-venv postgresql postgresql-contrib git curl ufw
 
 # --- Step 2: Setup PostgreSQL ---
 sudo systemctl enable postgresql
@@ -80,7 +77,7 @@ pip install --upgrade pip
 if [ -f "requirements.txt" ]; then
     pip install -r requirements.txt
 else
-    pip install django djangorestframework psycopg2-binary drf-spectacular python-dotenv gunicorn
+    pip install django djangorestframework psycopg2-binary drf-spectacular python-dotenv
 fi
 echo "✅ Python dependencies installed."
 
@@ -95,63 +92,13 @@ python manage.py makemigrations
 python manage.py migrate
 echo "✅ Django migrations & static files complete."
 
-# --- Step 7: Configure Gunicorn systemd service ---
-GUNICORN_SERVICE_FILE="/etc/systemd/system/$PROJECT_NAME.service"
-
-sudo bash -c "cat > $GUNICORN_SERVICE_FILE" <<EOL
-[Unit]
-Description=Gunicorn service for $PROJECT_NAME
-After=network.target
-
-[Service]
-User=ubuntu
-Group=www-data
-WorkingDirectory=$PROJECT_DIR
-Environment="DJANGO_SETTINGS_MODULE=$DJANGO_SETTINGS_MODULE"
-ExecStart=$PROJECT_DIR/venv/bin/gunicorn --workers 3 --bind 127.0.0.1:$APP_PORT config.wsgi:application
-
-[Install]
-WantedBy=multi-user.target
-EOL
-
-sudo systemctl daemon-reload
-sudo systemctl enable "$PROJECT_NAME"
-sudo systemctl restart "$PROJECT_NAME"
-echo "✅ Gunicorn started/restarted."
-
-# --- Step 8: Configure Nginx ---
-NGINX_CONF="/etc/nginx/sites-available/$PROJECT_NAME"
-
-sudo bash -c "cat > $NGINX_CONF" <<EOL
-server {
-    listen 80;
-    server_name $SERVER_NAME;
-
-    location = /favicon.ico { access_log off; log_not_found off; }
-
-    location /static/ {
-        alias $STATIC_DIR/;
-    }
-
-    location / {
-        include proxy_params;
-        proxy_pass http://127.0.0.1:$APP_PORT;
-    }
-}
-EOL
-
-sudo ln -sf $NGINX_CONF /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo systemctl restart nginx
-echo "✅ Nginx configured and restarted."
-
-# --- Step 9: Configure Firewall ---
+# --- Step 7: Configure Firewall ---
 sudo ufw allow OpenSSH
-sudo ufw allow 'Nginx Full'
 sudo ufw --force enable
 echo "✅ Firewall rules applied."
 
-# --- Step 10: Finish ---
+# --- Step 8: Finish ---
 PUBLIC_IP=$(curl -s http://checkip.amazonaws.com)
 echo "🎉 Deployment complete!"
-echo "🌐 Swagger UI: http://$PUBLIC_IP/api/schema/swagger-ui/"
+echo "📌 Now start Gunicorn and Nginx manually."
+echo "🌐 Swagger UI (after starting server): http://$PUBLIC_IP/api/schema/swagger-ui/"
