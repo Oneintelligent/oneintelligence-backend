@@ -9,7 +9,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = 'django-insecure-placeholder-key'
 DEBUG = True
-ALLOWED_HOSTS = ['192.168.1.9', '127.0.0.1', 'localhost:3000']
+ALLOWED_HOSTS = ['192.168.1.9', '127.0.0.1', 'localhost:3000', 'localhost', '3.109.211.100']
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -42,7 +42,8 @@ MIDDLEWARE = [
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",  # Next.js frontend
-    "http://192.168.1.9:3000"
+    "http://192.168.1.9:3000",
+    "http://3.109.211.100"
 ]
 
 # Optional: allow cookies (for CSRF/auth)
