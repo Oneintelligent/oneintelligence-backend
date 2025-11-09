@@ -32,8 +32,11 @@ sudo -u postgres psql -c "ALTER ROLE $DB_USER SET client_encoding TO 'utf8';"
 sudo -u postgres psql -c "ALTER ROLE $DB_USER SET default_transaction_isolation TO 'read committed';"
 sudo -u postgres psql -c "ALTER ROLE $DB_USER SET timezone TO 'UTC';"
 sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE \"$DB_NAME\" TO $DB_USER;"
-# --- FIX: Grant privileges on public schema ---
+
+# --- FIX: Schema permissions for existing DB ---
+sudo -u postgres psql -d "$DB_NAME" -c "ALTER SCHEMA public OWNER TO $DB_USER;"
 sudo -u postgres psql -d "$DB_NAME" -c "GRANT ALL PRIVILEGES ON SCHEMA public TO $DB_USER;"
+sudo -u postgres psql -d "$DB_NAME" -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO $DB_USER;"
 
 # --- Step 4: Check project directory ---
 if [ ! -f "$PROJECT_DIR/manage.py" ]; then
@@ -41,13 +44,12 @@ if [ ! -f "$PROJECT_DIR/manage.py" ]; then
     exit 1
 fi
 
-# --- Step 4a: Pull latest code from Git ---
 cd $PROJECT_DIR
+
+# --- Step 4a: Pull latest code from Git ---
 echo "📦 Pulling latest code from Git..."
 git fetch origin main
 git reset --hard origin/main
-
-cd $PROJECT_DIR
 
 # --- Step 5: Create/activate virtual environment ---
 if [ ! -d "venv" ]; then
@@ -96,12 +98,12 @@ sudo systemctl enable $PROJECT_NAME
 sudo chown ubuntu:www-data $PROJECT_DIR/$PROJECT_NAME.sock || true
 sudo chmod 660 $PROJECT_DIR/$PROJECT_NAME.sock || true
 
-# --- Step 10: Configure Nginx ---
+# --- Step 10: Configure Nginx as reverse proxy ---
 NGINX_CONF="/etc/nginx/sites-available/$PROJECT_NAME"
 sudo bash -c "cat > $NGINX_CONF" <<EOL
 server {
     listen 80;
-    server_name _;  # wildcard to avoid server_name error
+    server_name _;  # wildcard to avoid errors
 
     location = /favicon.ico { access_log off; log_not_found off; }
     location /static/ {
