@@ -9,7 +9,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = 'django-insecure-placeholder-key'
 DEBUG = True
-ALLOWED_HOSTS = ['192.168.1.9', '127.0.0.1']
+ALLOWED_HOSTS = ['192.168.1.9', '127.0.0.1', 'localhost:3000']
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -24,6 +24,7 @@ INSTALLED_APPS = [
     'app.onboarding.companies',
     'app.onboarding.subscriptions',
     'app.onboarding.products',
+    'corsheaders',
 
 
 ]
@@ -36,7 +37,17 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
 ]
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",  # Next.js frontend
+    "http://192.168.1.9:3000"
+]
+
+# Optional: allow cookies (for CSRF/auth)
+CORS_ALLOW_CREDENTIALS = True
+
 
 ROOT_URLCONF = 'config.urls'
 

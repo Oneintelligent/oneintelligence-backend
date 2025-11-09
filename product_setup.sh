@@ -32,6 +32,8 @@ sudo -u postgres psql -c "ALTER ROLE $DB_USER SET client_encoding TO 'utf8';"
 sudo -u postgres psql -c "ALTER ROLE $DB_USER SET default_transaction_isolation TO 'read committed';"
 sudo -u postgres psql -c "ALTER ROLE $DB_USER SET timezone TO 'UTC';"
 sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE \"$DB_NAME\" TO $DB_USER;"
+# --- FIX: Grant privileges on public schema ---
+sudo -u postgres psql -d "$DB_NAME" -c "GRANT ALL PRIVILEGES ON SCHEMA public TO $DB_USER;"
 
 # --- Step 4: Check project directory ---
 if [ ! -f "$PROJECT_DIR/manage.py" ]; then
@@ -93,7 +95,7 @@ NGINX_CONF="/etc/nginx/sites-available/$PROJECT_NAME"
 sudo bash -c "cat > $NGINX_CONF" <<EOL
 server {
     listen 80;
-    server_name $EC2_PUBLIC_IP;
+    server_name _;  # wildcard to avoid server_name error
 
     location = /favicon.ico { access_log off; log_not_found off; }
     location /static/ {
