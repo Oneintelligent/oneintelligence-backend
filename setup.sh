@@ -35,9 +35,14 @@ else
     exit 1
 fi
 
-# --- Step 3: Activate virtual environment ---
+# --- Step 3: Create/Activate virtual environment ---
+if [ ! -d "$PROJECT_DIR/venv" ]; then
+    echo "📦 Virtual environment not found. Creating..."
+    python3 -m venv "$PROJECT_DIR/venv"
+fi
 source "$PROJECT_DIR/venv/bin/activate"
 
+# --- Step 4: Install/update Python dependencies ---
 pip install --upgrade pip
 if [ -f "requirements.txt" ]; then
     pip install -r requirements.txt
@@ -45,7 +50,7 @@ else
     pip install django djangorestframework psycopg2-binary drf-spectacular python-dotenv gunicorn
 fi
 
-# --- Step 4: Run Django migrations & collect static ---
+# --- Step 5: Run Django migrations & collect static ---
 export DJANGO_SETTINGS_MODULE=$DJANGO_SETTINGS_MODULE
 
 python manage.py collectstatic --noinput
@@ -54,15 +59,35 @@ python manage.py migrate
 
 echo "✅ Django updated successfully."
 
-# --- Step 5: Restart Gunicorn service ---
-sudo systemctl restart "$PROJECT_NAME"
-echo "✅ Gunicorn restarted."
+# --- Step 6: Create/Update Gunicorn systemd service ---
+GUNICORN_SERVICE_FILE="/etc/systemd/system/$PROJECT_NAME.service"
 
-# --- Step 6: Restart Nginx ---
+sudo bash -c "cat > $GUNICORN_SERVICE_FILE" <<EOL
+[Unit]
+Description=Gunicorn service for $PROJECT_NAME
+After=network.target
+
+[Service]
+User=ubuntu
+Group=www-data
+WorkingDirectory=$PROJECT_DIR
+Environment=\"DJANGO_SETTINGS_MODULE=$DJANGO_SETTINGS_MODULE\"
+ExecStart=$PROJECT_DIR/venv/bin/gunicorn --workers 3 --bind unix:$PROJECT_DIR/$PROJECT_NAME.sock config.wsgi:application
+
+[Install]
+WantedBy=multi-user.target
+EOL
+
+sudo systemctl daemon-reload
+sudo systemctl enable "$PROJECT_NAME"
+sudo systemctl restart "$PROJECT_NAME"
+echo "✅ Gunicorn restarted with virtual environment."
+
+# --- Step 7: Restart Nginx ---
 sudo systemctl restart nginx
 echo "✅ Nginx restarted."
 
-# --- Step 7: Finish ---
+# --- Step 8: Finish ---
 PUBLIC_IP=$(curl -s http://checkip.amazonaws.com)
 echo "🎉 Update complete!"
 echo "🌐 Visit: http://$PUBLIC_IP"
