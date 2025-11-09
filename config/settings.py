@@ -9,8 +9,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = 'django-insecure-placeholder-key'
 DEBUG = True
-# ALLOWED_HOSTS = ['192.168.1.9', '127.0.0.1', 'localhost:3000', 'localhost', '3.109.211.100']
-ALLOWED_HOSTS = ['*']
+ALLOWED_HOSTS = ['192.168.1.9', '127.0.0.1', 'localhost:3000', 'localhost', '3.109.211.100']
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -32,6 +31,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',  # Must be at top
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -39,13 +39,13 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'corsheaders.middleware.CorsMiddleware',
 ]
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",  # Next.js frontend
     "http://192.168.1.9:3000",
-    "http://13.235.73.171"
+    "http://13.235.73.171",
+    "http://192.168.1.9:3000",
 ]
 
 # Optional: allow cookies (for CSRF/auth)
