@@ -15,6 +15,9 @@ DB_PASS="Onei@123"
 
 DJANGO_SETTINGS_MODULE="config.settings"
 APP_PORT=8000
+SERVER_NAME="13.201.192.254"
+
+STATIC_DIR="$PROJECT_DIR/static"
 
 echo "🚀 Starting $PROJECT_NAME full deployment..."
 
@@ -44,7 +47,7 @@ else
     echo "✅ Database $DB_NAME exists."
 fi
 
-# Set role configs (idempotent)
+# Set role configs
 sudo -u postgres psql -c "ALTER ROLE $DB_USER SET client_encoding TO 'utf8';"
 sudo -u postgres psql -c "ALTER ROLE $DB_USER SET default_transaction_isolation TO 'read committed';"
 sudo -u postgres psql -c "ALTER ROLE $DB_USER SET timezone TO 'UTC';"
@@ -85,7 +88,7 @@ echo "✅ Python dependencies installed."
 export DJANGO_SETTINGS_MODULE=$DJANGO_SETTINGS_MODULE
 
 # Ensure STATIC_ROOT exists (required for collectstatic)
-mkdir -p "$PROJECT_DIR/static"
+mkdir -p "$STATIC_DIR"
 
 python manage.py collectstatic --noinput
 python manage.py makemigrations
@@ -94,12 +97,6 @@ echo "✅ Django migrations & static files complete."
 
 # --- Step 7: Configure Gunicorn systemd service ---
 GUNICORN_SERVICE_FILE="/etc/systemd/system/$PROJECT_NAME.service"
-
-if [ ! -f "$GUNICORN_SERVICE_FILE" ]; then
-    echo "⚙️ Creating Gunicorn service..."
-else
-    echo "✅ Gunicorn service exists. Updating..."
-fi
 
 sudo bash -c "cat > $GUNICORN_SERVICE_FILE" <<EOL
 [Unit]
@@ -125,21 +122,15 @@ echo "✅ Gunicorn started/restarted."
 # --- Step 8: Configure Nginx ---
 NGINX_CONF="/etc/nginx/sites-available/$PROJECT_NAME"
 
-if [ ! -f "$NGINX_CONF" ]; then
-    echo "⚙️ Creating Nginx configuration..."
-else
-    echo "✅ Nginx configuration exists. Updating..."
-fi
-
 sudo bash -c "cat > $NGINX_CONF" <<EOL
 server {
     listen 80;
-    server_name 13.201.192.254;
+    server_name $SERVER_NAME;
 
     location = /favicon.ico { access_log off; log_not_found off; }
 
     location /static/ {
-        root $PROJECT_DIR;
+        alias $STATIC_DIR/;
     }
 
     location / {
