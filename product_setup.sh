@@ -10,6 +10,7 @@ DB_NAME="oneintelligence-db"
 DB_USER="oneintelligence"
 DB_PASS="Onei@123"
 DJANGO_SETTINGS_MODULE="config.settings"
+WSGI_MODULE="config.wsgi:application"
 EC2_PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
 
 echo "🚀 Starting $PROJECT_NAME production setup on Ubuntu..."
@@ -73,7 +74,7 @@ After=network.target
 User=ubuntu
 Group=www-data
 WorkingDirectory=$PROJECT_DIR
-ExecStart=$PROJECT_DIR/venv/bin/gunicorn --access-logfile - --workers 3 --bind unix:$PROJECT_DIR/$PROJECT_NAME.sock $PROJECT_NAME.wsgi:application
+ExecStart=$PROJECT_DIR/venv/bin/gunicorn --access-logfile - --workers 3 --bind unix:$PROJECT_DIR/$PROJECT_NAME.sock $WSGI_MODULE
 
 [Install]
 WantedBy=multi-user.target
@@ -82,6 +83,10 @@ EOL
 sudo systemctl daemon-reload
 sudo systemctl start $PROJECT_NAME
 sudo systemctl enable $PROJECT_NAME
+
+# --- Step 9b: Ensure socket permissions ---
+sudo chown ubuntu:www-data $PROJECT_DIR/$PROJECT_NAME.sock || true
+sudo chmod 660 $PROJECT_DIR/$PROJECT_NAME.sock || true
 
 # --- Step 10: Configure Nginx ---
 NGINX_CONF="/etc/nginx/sites-available/$PROJECT_NAME"
