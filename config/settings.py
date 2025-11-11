@@ -10,7 +10,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = 'django-insecure-placeholder-key'
 DEBUG = True
-ALLOWED_HOSTS = ['192.168.1.9', '127.0.0.1', 'localhost:3000', 'localhost', '3.109.211.100', '13.235.73.171']
+ALLOWED_HOSTS = ['192.168.1.9', '127.0.0.1', 'localhost:3000', 'localhost', '3.109.211.100', '13.235.73.171', '52.66.11.128']
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -49,6 +49,7 @@ CORS_ALLOWED_ORIGINS = [
     "http://192.168.1.9:3000",
     "http://13.235.73.171",
     "http://192.168.1.9:3000",
+    "http://52.66.11.128"
 ]
 
 # Optional: allow cookies (for CSRF/auth)
