@@ -93,12 +93,12 @@ python manage.py migrate
 echo "✅ Django migrations & static files complete."
 
 # --- Step 7: Configure Firewall ---
-sudo ufw allow OpenSSH
-sudo ufw --force enable
-echo "✅ Firewall rules applied."
+# sudo ufw allow OpenSSH
+# sudo ufw --force enable
+# echo "✅ Firewall rules applied."
 
 # --- Step 8: Finish ---
 PUBLIC_IP=$(curl -s http://checkip.amazonaws.com)
-echo "🎉 Deployment complete!"
+# echo "🎉 Deployment complete!"
 echo "📌 Now start Gunicorn and Nginx manually."
 echo "🌐 Swagger UI (after starting server): http://$PUBLIC_IP/api/schema/swagger-ui/"
