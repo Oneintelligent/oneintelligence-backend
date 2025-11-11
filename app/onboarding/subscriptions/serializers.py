@@ -18,6 +18,8 @@ class SubscriptionsSerializer(serializers.ModelSerializer):
             "is_trial",
             "created_date",
             "last_updated_date",
+            "trial_text",
+            "notes",
         ]
         extra_kwargs = {
             'plan': {'required': True},

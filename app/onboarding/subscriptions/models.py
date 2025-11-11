@@ -33,6 +33,8 @@ class Subscriptions(models.Model):
     end_date = models.DateTimeField(blank=True, null=True)
     status = models.CharField(max_length=10, choices=StatusChoices.choices, default=StatusChoices.INACTIVE)
     is_trial = models.BooleanField(default=False)
+    trial_text = models.CharField(max_length=50, blank=True, null=True)
+    notes = models.CharField(max_length=50, blank=True, null=True)
 
     created_date = models.DateTimeField(default=timezone.now)
     last_updated_date = models.DateTimeField(auto_now=True)
