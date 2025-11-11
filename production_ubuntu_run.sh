@@ -122,8 +122,17 @@ else
 fi
 
 # Fix directory access for Nginx
+# 1️⃣ Make sure Gunicorn socket and directories are accessible
+sudo chown -R ubuntu:www-data /home/ubuntu/oneintelligence-backend
 sudo chmod 755 /home/ubuntu
-sudo chmod 775 "$PROJECT_DIR"
+sudo chmod 755 /home/ubuntu/oneintelligence-backend
+
+# 2️⃣ Gunicorn socket should be group-writeable
+sudo chmod 770 /home/ubuntu/oneintelligence-backend/oneintelligence-backend.sock
+
+# 3️⃣ Static files only need read access
+sudo chmod -R 755 /home/ubuntu/oneintelligence-backend/static
+
 
 sudo systemctl restart gunicorn
 echo "🔁 Gunicorn restarted."
@@ -166,10 +175,17 @@ sudo systemctl restart nginx
 sudo systemctl enable nginx
 echo "🔁 Nginx restarted."
 
-# --- Step 9: Firewall Rules ---
-sudo ufw allow 'Nginx Full'
+# --- Step 9: Firewall Rules (Safe and Idempotent) ---
+echo "🛡️  Configuring firewall safely..."
+sudo ufw --force reset
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+sudo ufw allow 22/tcp comment "Allow SSH"
+sudo ufw allow 80/tcp comment "Allow HTTP"
+sudo ufw allow 443/tcp comment "Allow HTTPS"
 sudo ufw --force enable
-echo "✅ Firewall configured."
+sudo ufw status verbose
+echo "✅ Firewall configured safely (SSH, HTTP, HTTPS open)."
 
 # --- Step 10: Health Check ---
 PUBLIC_IP=$(curl -s http://checkip.amazonaws.com)
