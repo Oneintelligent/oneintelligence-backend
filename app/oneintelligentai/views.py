@@ -11,6 +11,7 @@ from rest_framework.response import Response
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
 from asgiref.sync import async_to_sync
+from drf_spectacular.utils import extend_schema
 
 load_dotenv()
 
@@ -107,6 +108,7 @@ async def get_openai_response_async(conversation, model_name="gpt-4o-mini"):
 # ===============================
 # 💬 TEXT CHAT ENDPOINT (Full Async + Streaming)
 # ===============================
+@extend_schema(exclude=True)
 @csrf_exempt # Use plain Django decorator for a full async view
 async def chat_api(request): # Must be async def
     if request.method != 'POST':
@@ -150,6 +152,8 @@ Current Mode: {mode}
 # ===============================
 # 🎙️ AUDIO CHAT ENDPOINT (Sync View + Non-Streaming Response)
 # ===============================
+@extend_schema(exclude=True)
+@csrf_exempt
 @api_view(['POST']) # We can use @api_view here because the view is sync
 def audio_chat_api(request): # Must be def (synchronous)
     try:
@@ -232,6 +236,8 @@ def audio_chat_api(request): # Must be def (synchronous)
 # ===============================
 # 🖼️ IMAGE CHAT ENDPOINT (Sync View + Non-Streaming Response)
 # ===============================
+@extend_schema(exclude=True)
+@csrf_exempt
 @api_view(['POST']) # We can use @api_view here because the view is sync
 def image_chat_api(request): # Must be def (synchronous)
     try:
