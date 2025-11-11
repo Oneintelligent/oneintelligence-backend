@@ -2,6 +2,9 @@ from django.contrib import admin
 from django.urls import path, include
 from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
 
+# Simple health/home route
+def home(request):
+    return HttpResponse("✅ OneIntelligence backend is running")
 
 urlpatterns = [
     path('admin/', admin.site.urls),
