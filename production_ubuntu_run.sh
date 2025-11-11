@@ -85,7 +85,7 @@ python manage.py makemigrations
 python manage.py migrate
 echo "✅ Django migrations and static collection complete."
 
-# --- Step 7: Gunicorn Setup ---
+# --- Step 7: Gunicorn Setup (fixed path, UMask, permissions) ---
 if [ ! -f "$GUNICORN_SERVICE" ]; then
     echo "⚙️ Creating Gunicorn systemd service..."
     sudo bash -c "cat > $GUNICORN_SERVICE" <<EOF
@@ -99,9 +99,10 @@ Group=www-data
 WorkingDirectory=$PROJECT_DIR
 Environment="DJANGO_SETTINGS_MODULE=$DJANGO_SETTINGS_MODULE"
 Environment="PATH=$PROJECT_DIR/venv/bin"
+UMask=007
 ExecStart=$PROJECT_DIR/venv/bin/gunicorn \
     --workers 3 \
-    --bind unix:/run/$PROJECT_NAME.sock \
+    --bind unix:$PROJECT_DIR/$PROJECT_NAME.sock \
     --timeout 120 \
     --access-logfile - \
     --error-logfile - \
@@ -120,16 +121,21 @@ else
     echo "✅ Gunicorn service already exists — skipping."
 fi
 
+# Fix directory access for Nginx
+sudo chmod 755 /home/ubuntu
+sudo chmod 775 "$PROJECT_DIR"
+
 sudo systemctl restart gunicorn
 echo "🔁 Gunicorn restarted."
 
-# --- Step 8: Nginx Setup ---
+# --- Step 8: Nginx Setup (correct socket path + server_name) ---
 if [ ! -f "$NGINX_CONF" ]; then
     echo "🌐 Creating Nginx configuration..."
+    PUBLIC_IP=$(curl -s http://checkip.amazonaws.com)
     sudo bash -c "cat > $NGINX_CONF" <<EOF
 server {
     listen 80;
-    server_name _;
+    server_name $PUBLIC_IP;
 
     location /static/ {
         alias $STATIC_DIR/;
@@ -140,10 +146,10 @@ server {
 
     location / {
         include proxy_params;
-        proxy_pass http://unix:/run/$PROJECT_NAME.sock;
+        proxy_pass http://unix:$PROJECT_DIR/$PROJECT_NAME.sock;
     }
 
-    client_max_body_size 20M;
+    client_max_body_size 50M;
     proxy_read_timeout 300;
     proxy_connect_timeout 300;
 }
