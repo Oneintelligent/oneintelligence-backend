@@ -7,7 +7,7 @@ urlpatterns = [
     path('admin/', admin.site.urls),
 
     # Onboarding modules
-    path('api/users/', include('app.onboarding.users.urls')),
+    path('api/', include('app.onboarding.users.urls')),
     path('api/companies/', include('app.onboarding.companies.urls')),
     path('api/subscriptions/', include('app.onboarding.subscriptions.urls')),
 
