@@ -1,27 +1,94 @@
-# Python
+# ==========================
+# 🧠 OneIntelligence Backend
+# Django + DRF + PostgreSQL
+# ==========================
+
+# --- Python ---
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+*$py.class
+
+# --- Byte-compiled / compiled / DLL files ---
+*.so
 *.pyd
+*.pyo
+*.dll
+*.exe
+*.egg-info/
+.eggs/
+
+# --- Virtual environments ---
+venv/
+env/
+ENV/
+.venv/
+env.bak/
+
+# --- OS / System files ---
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# --- Environment files ---
+.env
+.env.*
+.env.local
+.env.backup
+*.env
+
+# --- Django specific ---
+*.log
+*.pot
+*.pyc
 *.sqlite3
 db.sqlite3
 
-# Django
-*.log
+# --- Static & Media ---
 staticfiles/
 media/
-.env
-.env.local
-.env.*
+static/
+uploads/
 
-# VSCode / IDE
+# --- Django Migrations ---
+# Ignore all migration files except __init__.py to prevent conflicts across environments.
+**/migrations/*
+!**/migrations/__init__.py
+
+# --- IDE & Editors ---
 .vscode/
 .idea/
+*.swp
+*.swo
+*.bak
+*.tmp
+*.orig
 
-# OS files
-.DS_Store
-Thumbs.db
+# --- Tests / Coverage ---
+.coverage
+htmlcov/
+.tox/
+pytest_cache/
+*.cover
+*.log
+nosetests.xml
+coverage.xml
 
-# Virtual environments
-venv/
-env/
+# --- Deployment / Build ---
+build/
+dist/
+*.egg-info/
+*.spec
+
+# --- Docker / Compose ---
+*.pid
+*.seed
+*.tar
+*.bak
+*.old
+*.log
+*.tmp
+docker-compose.override.yml
+
+# --- Cache ---
+.cache/
+pip-log.txt
