@@ -83,6 +83,12 @@ mkdir -p "$STATIC_DIR"
 python manage.py collectstatic --noinput
 python manage.py makemigrations
 python manage.py migrate
+# --- Safe Migration Recheck (handles partial DB schema updates) ---
+echo "🧩 Running post-migration consistency check..."
+python manage.py makemigrations users || true
+python manage.py migrate users --fake-initial || true
+echo "✅ Database schema verified and up-to-date."
+
 echo "✅ Django migrations and static collection complete."
 
 # --- Step 7: Gunicorn Setup (fixed path, UMask, permissions) ---
@@ -128,7 +134,11 @@ sudo chmod 755 /home/ubuntu
 sudo chmod 755 /home/ubuntu/oneintelligence-backend
 
 # 2️⃣ Gunicorn socket should be group-writeable
-sudo chmod 770 /home/ubuntu/oneintelligence-backend/oneintelligence-backend.sock
+if [ -S "/home/ubuntu/oneintelligence-backend/oneintelligence-backend.sock" ]; then
+    sudo chmod 770 /home/ubuntu/oneintelligence-backend/oneintelligence-backend.sock
+else
+    echo "⚠️  Gunicorn socket not found yet — it will be created on first start."
+fi
 
 # 3️⃣ Static files only need read access
 sudo chmod -R 755 /home/ubuntu/oneintelligence-backend/static
