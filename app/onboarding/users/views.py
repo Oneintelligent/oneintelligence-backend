@@ -1,13 +1,16 @@
 import logging
 from django.contrib.auth.hashers import make_password, check_password
 from django.utils import timezone
-from rest_framework import viewsets, status, permissions
+from rest_framework import viewsets, status, permissions, serializers
 from rest_framework.decorators import action
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from .models import User
-from app.onboarding.users.serializers import UserSerializer
+from app.onboarding.users.serializers import UserSerializer, SignInSerializer, SignUpSerializer, SignOutSerializer
 from app.utils.response import api_response
+from rest_framework.exceptions import ValidationError
+
+
 
 logger = logging.getLogger(__name__)
 
@@ -41,93 +44,209 @@ class UserViewSet(viewsets.ModelViewSet):
     @extend_schema(
         tags=["User Authentication"],
         summary="Register a new user",
-        description="Creates a new user account with secure password hashing."
+        description="Creates a new user account with normalized lowercase email and securely hashed password.",
+        request=SignUpSerializer,  # ✅ Show only email, password, name, phone
+        responses={200: UserSerializer},
     )
     @action(detail=False, methods=["post"], url_path="signup", permission_classes=[permissions.AllowAny])
     def signup(self, request):
         """Register a new user."""
         try:
-            serializer = self.get_serializer(data=request.data)
+            serializer = SignUpSerializer(data=request.data)  # ✅ Use dedicated serializer
             serializer.is_valid(raise_exception=True)
 
-            if "password" in serializer.validated_data and serializer.validated_data["password"]:
-                serializer.validated_data["password"] = make_password(serializer.validated_data["password"])
-
             user = serializer.save()
-            return api_response(status_code=0, status="success", data=UserSerializer(user).data)
+
+            return api_response(
+                status_code=0,
+                status="success",
+                data=UserSerializer(user).data
+            )
+
+        except ValidationError as e:
+            error_message = (
+                e.detail if isinstance(e.detail, str)
+                else " ".join([f"{key}: {', '.join(val)}" for key, val in e.detail.items()])
+            )
+            return api_response(
+                status_code=1,
+                status="failure",
+                data={},
+                error_code="VALIDATION_ERROR",
+                error_message=error_message,
+            )
+
         except Exception as e:
             logger.exception("Error during signup")
             return api_response(
-                status_code=1, status="failure", data={}, error_code="SIGNUP_ERROR", error_message=str(e)
+                status_code=1,
+                status="failure",
+                data={},
+                error_code="SIGNUP_ERROR",
+                error_message=str(e),
             )
+
 
     @extend_schema(
         tags=["User Authentication"],
         summary="Sign in user",
-        description="Authenticate using email and password to receive access and refresh JWT tokens."
+        description="Authenticate using email and password (case-insensitive) to receive access and refresh JWT tokens.",
+        request=SignInSerializer,
+        responses={200: UserSerializer},
     )
     @action(detail=False, methods=["post"], url_path="signin", permission_classes=[permissions.AllowAny])
     def signin(self, request):
-        """Authenticate and return JWT tokens."""
+        """Authenticate user using email and password, return JWT tokens."""
         try:
-            email = request.data.get("email")
-            password = request.data.get("password")
-            if not email or not password:
-                return api_response(1, "failure", {}, "MISSING_CREDENTIALS", "Email and password are required.")
+            serializer = SignInSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
 
+            email = serializer.validated_data["email"].strip().lower()
+            password = serializer.validated_data["password"]
+
+            # 🔍 Fetch user by normalized email
             try:
-                user = User.objects.get(email=email)
+                user = User.objects.get(email__iexact=email)
             except User.DoesNotExist:
-                return api_response(1, "failure", {}, "INVALID_CREDENTIALS", "Invalid email or password.")
+                return api_response(
+                    status_code=1,
+                    status="failure",
+                    data={},
+                    error_code="INVALID_CREDENTIALS",
+                    error_message="Invalid email or password.",
+                )
 
+            # 🔐 Validate password
             if not check_password(password, user.password):
-                return api_response(1, "failure", {}, "INVALID_CREDENTIALS", "Invalid email or password.")
+                return api_response(
+                    status_code=1,
+                    status="failure",
+                    data={},
+                    error_code="INVALID_CREDENTIALS",
+                    error_message="Invalid email or password.",
+                )
 
+            # 🕒 Update last login time
             user.last_login_date = timezone.now()
             user.save(update_fields=["last_login_date"])
 
-            refresh = RefreshToken.for_user(user)
+            # 🪪 Generate JWT tokens manually (compatible with UUID)
+            refresh = RefreshToken()
+            refresh["user_id"] = str(user.userId)
+            refresh["email"] = user.email
+
+            access_token = str(refresh.access_token)
+            refresh_token = str(refresh)
+
+            # ✅ Successful response
             return api_response(
-                0, "success",
+                status_code=0,
+                status="success",
                 data={
-                    "user": {
-                        "userId": user.userId,
-                        "first_name": user.first_name,
-                        "last_name": user.last_name,
-                        "email": user.email,
-                        "role": user.role,
-                        "status": user.status,
-                    },
-                    "tokens": {"access": str(refresh.access_token), "refresh": str(refresh)},
-                }
+                    "userId": str(user.userId),
+                    "email": user.email,
+                    "first_name": user.first_name,
+                    "last_name": user.last_name,
+                    "role": user.role,
+                    "status": user.status,
+                    "access": access_token,
+                    "refresh": refresh_token,
+                },
             )
+
+        except ValidationError as e:
+            error_message = (
+                e.detail if isinstance(e.detail, str)
+                else " ".join([f"{key}: {', '.join(val)}" for key, val in e.detail.items()])
+            )
+            return api_response(
+                status_code=1,
+                status="failure",
+                data={},
+                error_code="VALIDATION_ERROR",
+                error_message=error_message,
+            )
+
         except Exception as e:
             logger.exception("Error during signin")
-            return api_response(1, "failure", {}, "SIGNIN_ERROR", str(e))
+            return api_response(
+                status_code=1,
+                status="failure",
+                data={},
+                error_code="SIGNIN_ERROR",
+                error_message=str(e),
+            )
 
+    
     @extend_schema(
         tags=["User Authentication"],
         summary="Sign out user",
-        description="Logs out the user by blacklisting the refresh token."
+        description=(
+            "Signs out the authenticated user. "
+            "Validates email and optionally blacklists the provided refresh token."
+        ),
+        request=SignOutSerializer,
     )
     @action(detail=False, methods=["post"], url_path="signout")
     def signout(self, request):
-        """Logout by blacklisting refresh token."""
+        """Logout authenticated user — validates email and optionally blacklists refresh token."""
         try:
-            refresh_token = request.data.get("refresh_token")
-            if not refresh_token:
-                return api_response(1, "failure", {}, "MISSING_TOKEN", "Refresh token is required for signout.")
+            serializer = SignOutSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
 
-            try:
-                token = RefreshToken(refresh_token)
-                token.blacklist()
-            except TokenError:
-                return api_response(1, "failure", {}, "INVALID_TOKEN", "Invalid or expired refresh token.")
+            email = serializer.validated_data["email"]
+            refresh_token = serializer.validated_data.get("refresh_token", "")
 
-            return api_response(0, "success", {"message": "User signed out successfully."})
+            # ✅ Ensure the access token belongs to the same user
+            user = request.user
+            if not user or not user.is_authenticated:
+                return api_response(1, "failure", {}, "UNAUTHORIZED", "Authentication required.")
+
+            if user.email.lower() != email.lower():
+                return api_response(
+                    1,
+                    "failure",
+                    {},
+                    "EMAIL_MISMATCH",
+                    "Email does not match the authenticated user.",
+                )
+
+            # ✅ Optional: blacklist refresh token if provided
+            if refresh_token:
+                try:
+                    token = RefreshToken(refresh_token)
+                    token.blacklist()
+                except TokenError:
+                    return api_response(
+                        1, "failure", {}, "INVALID_TOKEN", "Invalid or expired refresh token."
+                    )
+
+            # ✅ Update last activity
+            user.last_updated_date = timezone.now()
+            user.save(update_fields=["last_updated_date"])
+
+            return api_response(
+                0,
+                "success",
+                {"message": "User signed out successfully."},
+            )
+
+        except ValidationError as e:
+            error_message = (
+                e.detail if isinstance(e.detail, str)
+                else " ".join([f"{key}: {', '.join(val)}" for key, val in e.detail.items()])
+            )
+            return api_response(
+                1, "failure", {}, "VALIDATION_ERROR", error_message
+            )
+
         except Exception as e:
             logger.exception("Error during signout")
-            return api_response(1, "failure", {}, "SIGNOUT_ERROR", str(e))
+            return api_response(
+                1, "failure", {}, "SIGNOUT_ERROR", str(e)
+            )
+
+        
 
     # ----------------------------------------------------------------------
     # TOKEN ENDPOINTS
