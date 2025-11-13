@@ -25,6 +25,7 @@ class Company(models.Model):
     created_by_user_id = models.UUIDField(blank=False)
 
     # Optional descriptive fields
+    discount_percentage = models.PositiveIntegerField(default=0, help_text="Optional company-level discount")
     description = models.TextField(blank=True, null=True)
     industry = models.CharField(max_length=255, blank=True, null=True)
     company_size = models.CharField(

@@ -12,7 +12,7 @@ urlpatterns = [
     # Onboarding modules
     path('api/', include('app.onboarding.users.urls')),
     path('api/companies/', include('app.onboarding.companies.urls')),
-    path('api/subscriptions/', include('app.onboarding.subscriptions.urls')),
+    path("api/subscriptions/", include("app.onboarding.subscriptions.urls")),
 
     # Product routes from router
     path('api/products/', include('app.onboarding.products.urls')),
@@ -24,4 +24,6 @@ urlpatterns = [
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
     path('api/schema/swagger-ui/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
     path('api/schema/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
+
+    
 ]

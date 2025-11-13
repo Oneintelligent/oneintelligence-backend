@@ -59,6 +59,9 @@ class User(AbstractBaseUser, PermissionsMixin):
     time_zone = models.CharField(max_length=50, blank=True, default="UTC")
     status = models.CharField(max_length=10, choices=Status.choices, blank=True, default=Status.ACTIVE)
 
+    #discount
+    discount_percentage = models.PositiveIntegerField(default=0, help_text="Optional user-level discount")
+
     # Metadata
     last_login_date = models.DateTimeField(blank=True, null=True)
     created_date = models.DateTimeField(default=timezone.now)
