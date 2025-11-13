@@ -5,6 +5,7 @@ from rest_framework import viewsets
 from .models import Subscriptions
 from .serializers import SubscriptionsSerializer
 from app.utils.response import api_response
+from rest_framework.permissions import AllowAny  # ✅ change this import
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +13,7 @@ logger = logging.getLogger(__name__)
 class SubscriptionsViewSet(viewsets.ModelViewSet):
     queryset = Subscriptions.objects.all().order_by('-created_date')
     serializer_class = SubscriptionsSerializer
+    permission_classes = [AllowAny]  # ✅ anyone can access this endpoint
 
     def get_queryset(self):
         queryset = super().get_queryset()
