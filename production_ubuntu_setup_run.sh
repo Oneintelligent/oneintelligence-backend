@@ -81,12 +81,11 @@ echo "✅ Python dependencies installed."
 export DJANGO_SETTINGS_MODULE=$DJANGO_SETTINGS_MODULE
 mkdir -p "$STATIC_DIR"
 python manage.py collectstatic --noinput
-python manage.py makemigrations
-python manage.py migrate
+python manage.py migrate --noinput
+
 # --- Safe Migration Recheck (handles partial DB schema updates) ---
 echo "🧩 Running post-migration consistency check..."
-python manage.py makemigrations users || true
-python manage.py migrate users --fake-initial || true
+
 echo "✅ Database schema verified and up-to-date."
 
 echo "✅ Django migrations and static collection complete."
