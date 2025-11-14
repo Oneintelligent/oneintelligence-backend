@@ -136,3 +136,8 @@ class SignOutSerializer(serializers.Serializer):
             raise serializers.ValidationError("This account is inactive. Please contact support.")
 
         return normalized_email
+    
+class UserPublicSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        exclude = ["password"]

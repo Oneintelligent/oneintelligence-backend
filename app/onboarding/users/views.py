@@ -15,7 +15,7 @@ from .serializers import (
     UserSerializer,
     SignInSerializer,
     SignUpSerializer,
-    SignOutSerializer,
+    SignOutSerializer, UserPublicSerializer
 )
 from app.utils.response import api_response
 
@@ -69,11 +69,7 @@ class UserViewSet(viewsets.ViewSet):
             user.last_login_date = timezone.now()
             user.save(update_fields=["last_login_date"])
 
-            response_data = {
-                "user": UserSerializer(user).data,
-                "access": access_token,
-                "access_expires_in": refresh.access_token.lifetime.total_seconds(),
-            }
+            response_data = UserPublicSerializer(user).data
 
             res = api_response(0, "success", response_data)
 
@@ -130,16 +126,7 @@ class UserViewSet(viewsets.ViewSet):
             refresh = RefreshToken.for_user(user)
             access_token = str(refresh.access_token)
 
-            response_data = {
-                "userId": str(user.userId),
-                "email": user.email,
-                "first_name": user.first_name,
-                "last_name": user.last_name,
-                "role": user.role,
-                "status": user.status,
-                "access": access_token,
-                "access_expires_in": refresh.access_token.lifetime.total_seconds(),
-            }
+            response_data = UserPublicSerializer(user).data
 
             res = api_response(0, "success", response_data)
 
