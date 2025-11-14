@@ -9,6 +9,7 @@ from app.utils.response import api_response
 from app.onboarding.companies.models import Company
 from app.onboarding.companies.serializers import CompanySettingsSerializer
 from app.onboarding.companies.permissions import is_owner, is_company_admin, is_platform_admin
+from app.onboarding.companies.serializers_full import CompanyFullSerializer
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +39,9 @@ class CompanySettingsAPIView(APIView):
         company = self.get_company(companyId)
         if not company:
             return api_response(status_code=status.HTTP_404_NOT_FOUND, status="error", data={}, error_code="NOT_FOUND", error_message="Company not found")
-        serializer = CompanySettingsSerializer(company)
-        return api_response(status_code=status.HTTP_200_OK, status="success", data=serializer.data)
+
+        serializer = CompanyFullSerializer(company)
+        return api_response(200, "success", serializer.data)
 
     @transaction.atomic
     def put(self, request, companyId):
