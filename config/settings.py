@@ -122,7 +122,7 @@ SIMPLE_JWT = {
     "USER_ID_CLAIM": "userId",
 
     "AUTH_COOKIE": "oi_refresh_token",   # cookie name
-    "AUTH_COOKIE_SECURE": False,          # HTTPS only (turn off for local dev)
+    "AUTH_COOKIE_SECURE": True,          # HTTPS only (turn off for local dev)
     "AUTH_COOKIE_HTTP_ONLY": True,       # prevent JS access
     "AUTH_COOKIE_SAMESITE": "None",      # needed for cross-domain FE
     "AUTH_COOKIE_PATH": "/",             # cookie scope
