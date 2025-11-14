@@ -7,48 +7,69 @@ from django.utils import timezone
 # ------------------------------------------------------------------------------------------------
 #   SubscriptionPlan (clean, consistent, stable)
 # ------------------------------------------------------------------------------------------------
+
+
 class SubscriptionPlan(models.Model):
 
     class PlanChoices(models.TextChoices):
         PRO = "Pro", "Pro"
-        MAX = "Max", "Pro Max"
+        MAX = "MaxPro", "Max Pro"
         ULTRA = "Ultra", "Ultra"
 
     class StatusChoices(models.TextChoices):
         ACTIVE = "Active", "Active"
         INACTIVE = "Inactive", "Inactive"
 
-    # Core plan details
-    name = models.CharField(max_length=32, choices=PlanChoices.choices, unique=True)
-    monthly_price = models.PositiveIntegerField()
-    yearly_price = models.PositiveIntegerField()
+    # ---- Core Plan Info ----
+    name = models.CharField(
+        max_length=32,
+        choices=PlanChoices.choices,
+        unique=False  # You will create 3 entries per seat pack
+    )
 
-    # ✔ NEW — enable/disable trial at plan level
+    # Example: {"1": 999, "3": 1999, "5": 2999, ...}
+    base_prices = models.JSONField(default=dict)
+
+    # multipliers: Pro=1, MaxPro=1.5, Ultra=4
+    multiplier = models.FloatField(default=1.0)
+
+    # Generic feature toggles
+    features = models.JSONField(default=list)
+
+    # Trials
     has_trial = models.BooleanField(default=False)
-
-    # ✔ NEW — trial duration (default 90 days)
     trial_days = models.PositiveIntegerField(default=90)
-    # Optional discount applies globally to this plan
+
+    # Discount that applies globally to plan
     global_discount_percentage = models.PositiveIntegerField(default=0)
 
-    # Allow enabling/disabling plan in UI
     status = models.CharField(
         max_length=15,
         choices=StatusChoices.choices,
         default=StatusChoices.ACTIVE
     )
 
-    # Pricing UI features
-    features = models.JSONField(default=list)
-
     created_date = models.DateTimeField(auto_now_add=True)
     last_updated_date = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = "subscription_plans"    # ⚡ CLEAN TABLE NAME
+        db_table = "subscription_plans"
 
     def __str__(self):
-        return self.name
+        return f"{self.name}"
+
+    # -------------------------
+    # Price Calculator (core)
+    # -------------------------
+    def get_pack_price(self, seats: int) -> int:
+        """Returns the final pack price for the given seat count."""
+        seat_str = str(seats)
+        if seat_str not in self.base_prices:
+            raise ValueError(f"Seat pack '{seat_str}' not defined for plan {self.name}")
+
+        base_price = self.base_prices[seat_str]
+        final = base_price * self.multiplier
+        return int(final)
 
 
 # ------------------------------------------------------------------------------------------------
@@ -133,38 +154,47 @@ class Subscriptions(models.Model):
     # -------------------------
     # Main Price Calculation
     # -------------------------
-    def save(self, *args, **kwargs):
+    # app/subscriptions/models.py
 
-        # 1️⃣ Base price per license
-        base_price = (
-            self.plan.monthly_price
-            if self.billing_type == self.BillingType.MONTHLY
-            else self.plan.yearly_price
-        )
-        self.base_price_per_license = base_price
+def save(self, *args, **kwargs):
+    """
+    Updated save() with pack-based pricing:
+    - Uses SubscriptionPlan.get_pack_price()
+    - Applies discounts (plan, company, user)
+    - Applies trial override
+    """
 
-        # 2️⃣ Get discounts
-        plan_discount = int(self.plan.global_discount_percentage or 0)
-        company_discount = self._get_company_discount()
-        user_discount = self._get_user_discount()
+    # 1️⃣ Get pack price based on selected license_count (seat pack)
+    # Example: plan.get_pack_price(10) returns:
+    #   Pro: 4999
+    #   MaxPro: 7499
+    #   Ultra: 19999
 
-        # Highest wins
-        applied_discount = max(plan_discount, company_discount, user_discount)
-        self.applied_discount = applied_discount
+    try:
+        base_price = self.plan.get_pack_price(self.license_count)
+        self.base_price_per_license = 0  # pack-based, not per-seat
+    except Exception:
+        # fallback
+        base_price = 0
 
-        # 3️⃣ Apply discount
-        discounted_price = base_price * (100 - applied_discount) / 100
-        self.final_price_per_license = int(round(discounted_price))
+    
+    # 2️⃣ Apply discounts (highest wins)
+    plan_discount = int(self.plan.global_discount_percentage or 0)
+    company_discount = self._get_company_discount()
+    user_discount = self._get_user_discount()
 
-        # 4️⃣ Multiply by seat count
-        self.final_total_price = self.final_price_per_license * (self.license_count or 1)
+    applied_discount = max(plan_discount, company_discount, user_discount)
+    self.applied_discount = applied_discount
 
-        # 5️⃣ Trial override
-        if self.is_trial:
-            self.final_price_per_license = 0
-            self.final_total_price = 0
-            if not self.end_date:
-                self.end_date = timezone.now() + timedelta(days=90)
-            self.status = self.StatusChoices.ACTIVE
+    discounted_price = base_price * (100 - applied_discount) / 100
+    self.final_total_price = int(discounted_price)
 
-        super().save(*args, **kwargs)
+    # 3️⃣ Trial override
+    if self.is_trial:
+        self.final_total_price = 0
+        if not self.end_date:
+            days = self.plan.trial_days or 90
+            self.end_date = timezone.now() + timedelta(days=days)
+        self.status = self.StatusChoices.ACTIVE
+
+    super().save(*args, **kwargs)

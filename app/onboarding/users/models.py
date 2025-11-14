@@ -23,10 +23,13 @@ class UserManager(BaseUserManager):
 
 class User(AbstractBaseUser, PermissionsMixin):
     class Role(models.TextChoices):
+        PLATFORMADMIN = "PlatformAdmin"
+        SUPERADMIN = "SuperAdmin"
         ADMIN = "Admin"
         MANAGER = "Manager"
         USER = "User"
         GUEST = "Guest"
+
 
     class Status(models.TextChoices):
         ACTIVE = "Active"
@@ -53,7 +56,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     password = models.CharField(max_length=255, blank=True, null=True)
 
     # Profile & settings
-    role = models.CharField(max_length=10, choices=Role.choices, blank=True, default=Role.USER)
+    role = models.CharField(max_length=20, choices=Role.choices, blank=True, default=Role.USER)
     profile_picture_url = models.URLField(blank=True, null=True)
     language_preference = models.CharField(max_length=10, blank=True, default="en-US")
     time_zone = models.CharField(max_length=50, blank=True, default="UTC")

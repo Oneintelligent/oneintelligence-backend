@@ -1,21 +1,30 @@
 from django.contrib import admin
 from django.urls import path, include
 from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
+from rest_framework.routers import DefaultRouter
 
-# Simple health/home route
-def home(request):
-    return HttpResponse("✅ OneIntelligence backend is running")
+# User ViewSet router
+from app.onboarding.users.views import UserViewSet
+
+router = DefaultRouter()
+router.register(r"users", UserViewSet, basename="users")
+
 
 urlpatterns = [
-    path('admin/', admin.site.urls),
+    # ================================
+    # API ROUTES
+    # ================================
+    path("api/v1/", include(router.urls)),
 
-    # Onboarding modules
-    path('api/', include('app.onboarding.users.urls')),
-    path('api/companies/', include('app.onboarding.companies.urls')),
-    path("api/subscriptions/", include("app.onboarding.subscriptions.urls")),
+    # Company Setup / Settings APIs
+    path("api/v1/company/", include("app.onboarding.companies.urls")),
 
-    # Product routes from router
-    path('api/products/', include('app.onboarding.products.urls')),
+    # Products (if enabled)
+    # path("api/v1/products/", include("app.onboarding.products.urls")),
+
+    # Subscriptions
+    path("api/v1/subscriptions/", include("app.subscriptions.urls")),
+
 
     # Oneintelligent AI endpoints
     path('api/oneintelligentai/', include('app.oneintelligentai.urls')),

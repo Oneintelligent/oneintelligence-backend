@@ -23,8 +23,9 @@ INSTALLED_APPS = [
     'drf_spectacular',
     'app.onboarding.users',
     'app.onboarding.companies',
-    'app.onboarding.subscriptions',
-    'app.onboarding.products',
+    'app.subscriptions',
+    'app.onboarding.invites',
+    'app.products',
     'app.oneintelligentai',  # <--- THIS LINE IS CRUCIAL
     'corsheaders',
     'rest_framework_simplejwt',
@@ -115,6 +116,8 @@ SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(hours=6),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
     "ROTATE_REFRESH_TOKENS": True,
+    "USER_ID_FIELD": "userId",
+    "USER_ID_CLAIM": "userId",
 }
 
 AUTHENTICATION_BACKENDS = [
@@ -122,4 +125,28 @@ AUTHENTICATION_BACKENDS = [
 ]
 
 AUTH_USER_MODEL = "users.User"
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "OneIntelligence API",
+    "DESCRIPTION": "OneIntelligence Backend API Documentation",
+    "VERSION": "1.0.0",
+
+    # 👇 THIS IS THE IMPORTANT PART
+    "SERVE_INCLUDE_SCHEMA": False,
+    "COMPONENT_SPLIT_REQUEST": True,
+
+    "SECURITY": [
+        {
+            "bearerAuth": []
+        }
+    ],
+
+    "SECURITY_SCHEMES": {
+        "bearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+        }
+    },
+}
 

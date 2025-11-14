@@ -7,17 +7,17 @@ class SubscriptionPlanSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "name",
-            "monthly_price",
-            "yearly_price",
-            "global_discount_percentage",
-            "status",
+            "multiplier",
+            "base_prices",
+            "features",
             "has_trial",
             "trial_days",
-            "features",
+            "global_discount_percentage",
+            "status",
             "created_date",
-            "last_updated_date",
+            "last_updated_date"
         ]
-        read_only_fields = ["created_date", "last_updated_date"]
+
 
 class SubscriptionsSerializer(serializers.ModelSerializer):
     plan = serializers.PrimaryKeyRelatedField(queryset=SubscriptionPlan.objects.all())
