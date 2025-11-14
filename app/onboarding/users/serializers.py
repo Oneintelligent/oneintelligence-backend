@@ -141,3 +141,13 @@ class UserPublicSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         exclude = ["password"]
+
+class UserProfileUpdateSerializer(serializers.Serializer):
+    first_name = serializers.CharField(required=False, allow_blank=True)
+    last_name = serializers.CharField(required=False, allow_blank=True)
+    email = serializers.EmailField(required=False)
+    phone = serializers.CharField(required=False, allow_blank=True)
+    profile_picture_url = serializers.CharField(required=False, allow_blank=True)
+    language_preference = serializers.CharField(required=False, allow_blank=True)
+    time_zone = serializers.CharField(required=False, allow_blank=True)
+    settings = serializers.DictField(required=False)

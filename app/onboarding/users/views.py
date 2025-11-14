@@ -15,7 +15,9 @@ from .serializers import (
     UserSerializer,
     SignInSerializer,
     SignUpSerializer,
-    SignOutSerializer, UserPublicSerializer
+    SignOutSerializer, 
+    UserPublicSerializer, 
+    UserProfileUpdateSerializer,
 )
 from app.utils.response import api_response
 
@@ -230,3 +232,65 @@ class UserViewSet(viewsets.ViewSet):
     # change_password — unchanged
     # update_details — unchanged
     # ============================================================
+
+    # ============================================================
+    # UPDATE AUTHENTICATED USER PROFILE (NO COMPANY REQUIRED)
+    # ============================================================
+        # ============================================================
+    # UPDATE AUTHENTICATED USER PROFILE (NO COMPANY REQUIRED)
+    # ============================================================
+    @extend_schema(
+        tags=["User Profile"],
+        summary="Update your own profile",
+        description="Allows any authenticated user to update personal profile fields.",
+        request=UserProfileUpdateSerializer,
+        responses={200: OpenApiResponse(description="Profile updated")},
+    )
+    @action(detail=False, methods=["put"], url_path="me/update")
+    def update_me(self, request):
+        try:
+            serializer = UserProfileUpdateSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            updates = serializer.validated_data
+
+            user = request.user
+
+            allowed_fields = [
+                "first_name",
+                "last_name",
+                "email",
+                "phone",
+                "profile_picture_url",
+                "language_preference",
+                "time_zone",
+                "settings",
+            ]
+
+            update_list = []
+
+            for field in allowed_fields:
+                if field in updates:
+                    setattr(user, field, updates[field])
+                    update_list.append(field)
+
+            if update_list:
+                user.last_updated_date = timezone.now()
+                update_list.append("last_updated_date")
+                user.save(update_fields=update_list)
+
+            return api_response(
+                0,
+                "success",
+                {
+                    "message": "Profile updated successfully",
+                    "user": UserPublicSerializer(user).data,
+                }
+            )
+
+        except Exception as e:
+            logger.exception("Profile update failed")
+            return api_response(
+                1, "failure", {},
+                "PROFILE_UPDATE_ERROR",
+                str(e)
+            )
