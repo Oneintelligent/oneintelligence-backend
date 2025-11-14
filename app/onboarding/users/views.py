@@ -12,11 +12,10 @@ from django.conf import settings
 
 from .models import User
 from .serializers import (
-    UserSerializer,
     SignInSerializer,
     SignUpSerializer,
-    SignOutSerializer, 
-    UserPublicSerializer, 
+    SignOutSerializer,
+    UserPublicSerializer,
     UserProfileUpdateSerializer,
 )
 from app.utils.response import api_response
@@ -47,9 +46,8 @@ class UserViewSet(viewsets.ViewSet):
         return [permissions.IsAuthenticated()]
 
     # ============================================================
-    # SIGNUP — SETS REFRESH HTTPONLY COOKIE
+    # SIGNUP — RETURNS USER + ACCESS TOKEN + SETS REFRESH COOKIE
     # ============================================================
-
     @extend_schema(
         tags=["User Authentication"],
         summary="Register new user (auto-login)",
@@ -65,40 +63,60 @@ class UserViewSet(viewsets.ViewSet):
             with transaction.atomic():
                 user = serializer.save()
 
+            # Create tokens
             refresh = RefreshToken.for_user(user)
             access_token = str(refresh.access_token)
+            refresh_token = str(refresh)
 
+            # Update last login
             user.last_login_date = timezone.now()
             user.save(update_fields=["last_login_date"])
 
-            response_data = UserPublicSerializer(user).data
+            response_payload = {
+                "user": UserPublicSerializer(user).data,
+                "access": access_token,
+            }
 
-            res = api_response(0, "success", response_data)
+            res = api_response(
+                status_code=status.HTTP_200_OK,
+                status="success",
+                data=response_payload
+            )
 
-            # Set HttpOnly refresh cookie
+            # Apply cookie settings
+            cookie_name = settings.SIMPLE_JWT.get("AUTH_COOKIE", "oi_refresh_token")
             res.set_cookie(
-                key=settings.SIMPLE_JWT["AUTH_COOKIE"],
-                value=str(refresh),
-                httponly=True,
-                secure=settings.SIMPLE_JWT["AUTH_COOKIE_SECURE"],
-                samesite=settings.SIMPLE_JWT["AUTH_COOKIE_SAMESITE"],
-                path=settings.SIMPLE_JWT["AUTH_COOKIE_PATH"],
+                key=cookie_name,
+                value=refresh_token,
+                httponly=settings.SIMPLE_JWT.get("AUTH_COOKIE_HTTP_ONLY", True),
+                secure=settings.SIMPLE_JWT.get("AUTH_COOKIE_SECURE", False),
+                samesite=settings.SIMPLE_JWT.get("AUTH_COOKIE_SAMESITE", "Lax"),
+                path=settings.SIMPLE_JWT.get("AUTH_COOKIE_PATH", "/"),
             )
 
             return res
 
         except ValidationError as e:
-            return api_response(1, "failure", {}, "VALIDATION_ERROR", str(e.detail))
-
+            return api_response(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                status="failure",
+                data={},
+                error_code="VALIDATION_ERROR",
+                error_message=str(e.detail)
+            )
         except Exception as e:
             logger.exception("Signup failed")
-            return api_response(1, "failure", {}, "SIGNUP_ERROR", str(e))
-
+            return api_response(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status="failure",
+                data={},
+                error_code="SIGNUP_ERROR",
+                error_message=str(e)
+            )
 
     # ============================================================
-    # SIGNIN — SETS REFRESH HTTPONLY COOKIE
+    # SIGNIN — RETURNS USER + ACCESS TOKEN + SETS REFRESH COOKIE
     # ============================================================
-
     @extend_schema(
         tags=["User Authentication"],
         summary="Sign in",
@@ -117,42 +135,65 @@ class UserViewSet(viewsets.ViewSet):
             user = authenticate(request=request, email=email, password=password)
 
             if not user:
-                return api_response(1, "failure", {}, "INVALID_CREDENTIALS", "Invalid email or password.")
+                return api_response(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    status="failure",
+                    data={},
+                    error_code="INVALID_CREDENTIALS",
+                    error_message="Invalid email or password."
+                )
 
-            if user.status.lower() != "active":
-                return api_response(1, "failure", {}, "INACTIVE_ACCOUNT", "Your account is inactive.")
+            if getattr(user, "status", "").lower() != "active":
+                return api_response(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    status="failure",
+                    data={},
+                    error_code="INACTIVE_ACCOUNT",
+                    error_message="Your account is inactive."
+                )
 
             user.last_login_date = timezone.now()
             user.save(update_fields=["last_login_date"])
 
             refresh = RefreshToken.for_user(user)
             access_token = str(refresh.access_token)
+            refresh_token = str(refresh)
 
-            response_data = UserPublicSerializer(user).data
+            response_payload = {
+                "user": UserPublicSerializer(user).data,
+                "access": access_token,
+            }
 
-            res = api_response(0, "success", response_data)
+            res = api_response(
+                status_code=status.HTTP_200_OK,
+                status="success",
+                data=response_payload
+            )
 
-            # Set HttpOnly refresh cookie
             res.set_cookie(
-                key=settings.SIMPLE_JWT["AUTH_COOKIE"],
-                value=str(refresh),
-                httponly=True,
-                secure=settings.SIMPLE_JWT["AUTH_COOKIE_SECURE"],
-                samesite=settings.SIMPLE_JWT["AUTH_COOKIE_SAMESITE"],
-                path=settings.SIMPLE_JWT["AUTH_COOKIE_PATH"],
+                key=settings.SIMPLE_JWT.get("AUTH_COOKIE", "oi_refresh_token"),
+                value=refresh_token,
+                httponly=settings.SIMPLE_JWT.get("AUTH_COOKIE_HTTP_ONLY", True),
+                secure=settings.SIMPLE_JWT.get("AUTH_COOKIE_SECURE", False),
+                samesite=settings.SIMPLE_JWT.get("AUTH_COOKIE_SAMESITE", "Lax"),
+                path=settings.SIMPLE_JWT.get("AUTH_COOKIE_PATH", "/"),
             )
 
             return res
 
         except Exception as e:
             logger.exception("Signin failed")
-            return api_response(1, "failure", {}, "SIGNIN_ERROR", str(e))
-
+            return api_response(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status="failure",
+                data={},
+                error_code="SIGNIN_ERROR",
+                error_message=str(e)
+            )
 
     # ============================================================
-    # SIGNOUT — DELETE COOKIE
+    # SIGNOUT — DELETE REFRESH COOKIE
     # ============================================================
-
     @extend_schema(
         tags=["User Authentication"],
         summary="Sign out user",
@@ -164,85 +205,122 @@ class UserViewSet(viewsets.ViewSet):
             serializer = SignOutSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
 
-            response = api_response(0, "success", {"message": "Signed out successfully."})
+            response = api_response(
+                status_code=status.HTTP_200_OK,
+                status="success",
+                data={"message": "Signed out successfully."}
+            )
 
-            # Delete refresh cookie
             response.delete_cookie(
                 key=settings.SIMPLE_JWT["AUTH_COOKIE"],
                 path=settings.SIMPLE_JWT["AUTH_COOKIE_PATH"],
             )
-
             return response
 
         except Exception as e:
             logger.exception("Signout failed")
-            return api_response(1, "failure", {}, "SIGNOUT_ERROR", str(e))
-
+            return api_response(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status="failure",
+                data={},
+                error_code="SIGNOUT_ERROR",
+                error_message=str(e)
+            )
 
     # ============================================================
-    # TOKEN REFRESH — READ FROM COOKIE, ROTATE COOKIE
+    # TOKEN REFRESH — ROTATE COOKIE + RETURN ACCESS TOKEN
     # ============================================================
-
     @extend_schema(
         tags=["Tokens"],
         summary="Refresh access token (HttpOnly cookie)",
+        responses={200: OpenApiResponse(description="New access token")},
     )
     @action(detail=False, methods=["post"], url_path="token/refresh")
     def token_refresh(self, request):
         try:
-            cookie_name = settings.SIMPLE_JWT["AUTH_COOKIE"]
+            cookie_name = settings.SIMPLE_JWT.get("AUTH_COOKIE", "oi_refresh_token")
             refresh_token = request.COOKIES.get(cookie_name)
 
             if not refresh_token:
-                return api_response(1, "failure", {}, "MISSING_REFRESH_TOKEN", "Refresh cookie missing.")
+                return api_response(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    status="failure",
+                    data={},
+                    error_code="MISSING_REFRESH_TOKEN",
+                    error_message="Refresh cookie missing."
+                )
 
             try:
-                refresh = RefreshToken(refresh_token)
+                old_refresh = RefreshToken(refresh_token)
             except TokenError:
-                return api_response(1, "failure", {}, "INVALID_REFRESH", "Invalid refresh token.")
+                return api_response(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    status="failure",
+                    data={},
+                    error_code="INVALID_REFRESH",
+                    error_message="Invalid refresh token."
+                )
 
-            # Create access token
-            access = str(refresh.access_token)
+            # Extract user_id from token
+            user_id_claim = settings.SIMPLE_JWT.get("USER_ID_CLAIM", "user_id")
+            user_id = old_refresh.payload.get(user_id_claim)
+
+            if not user_id:
+                return api_response(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    status="failure",
+                    data={},
+                    error_code="INVALID_TOKEN",
+                    error_message="Could not extract user_id."
+                )
 
             # Rotate refresh
-            new_refresh = RefreshToken.for_user(refresh.access_token.payload["user_id"])
+            user = User.objects.filter(userId=user_id).first()
+            if not user:
+                return api_response(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    status="failure",
+                    data={},
+                    error_code="USER_NOT_FOUND",
+                    error_message="Token user does not exist."
+                )
 
-            res = api_response(0, "success", {"access": access})
+            new_refresh = RefreshToken.for_user(user)
+            new_access = str(new_refresh.access_token)
 
-            # Store new refresh cookie
+            res = api_response(
+                status_code=status.HTTP_200_OK,
+                status="success",
+                data={"access": new_access}
+            )
+
             res.set_cookie(
                 key=cookie_name,
                 value=str(new_refresh),
-                httponly=True,
-                secure=settings.SIMPLE_JWT["AUTH_COOKIE_SECURE"],
-                samesite=settings.SIMPLE_JWT["AUTH_COOKIE_SAMESITE"],
-                path=settings.SIMPLE_JWT["AUTH_COOKIE_PATH"],
+                httponly=settings.SIMPLE_JWT.get("AUTH_COOKIE_HTTP_ONLY", True),
+                secure=settings.SIMPLE_JWT.get("AUTH_COOKIE_SECURE", False),
+                samesite=settings.SIMPLE_JWT.get("AUTH_COOKIE_SAMESITE", "Lax"),
+                path=settings.SIMPLE_JWT.get("AUTH_COOKIE_PATH", "/"),
             )
 
             return res
 
         except Exception as e:
             logger.exception("Refresh failed")
-            return api_response(1, "failure", {}, "REFRESH_ERROR", str(e))
-
-
-    # ============================================================
-    # token_verify — unchanged
-    # profile — unchanged
-    # change_password — unchanged
-    # update_details — unchanged
-    # ============================================================
+            return api_response(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status="failure",
+                data={},
+                error_code="REFRESH_ERROR",
+                error_message=str(e)
+            )
 
     # ============================================================
-    # UPDATE AUTHENTICATED USER PROFILE (NO COMPANY REQUIRED)
-    # ============================================================
-        # ============================================================
-    # UPDATE AUTHENTICATED USER PROFILE (NO COMPANY REQUIRED)
+    # UPDATE AUTHENTICATED USER PROFILE
     # ============================================================
     @extend_schema(
         tags=["User Profile"],
         summary="Update your own profile",
-        description="Allows any authenticated user to update personal profile fields.",
         request=UserProfileUpdateSerializer,
         responses={200: OpenApiResponse(description="Profile updated")},
     )
@@ -255,7 +333,7 @@ class UserViewSet(viewsets.ViewSet):
 
             user = request.user
 
-            allowed_fields = [
+            allowed = [
                 "first_name",
                 "last_name",
                 "email",
@@ -266,17 +344,15 @@ class UserViewSet(viewsets.ViewSet):
                 "settings",
             ]
 
-            update_list = []
+            changed = False
+            for f in allowed:
+                if f in updates:
+                    setattr(user, f, updates[f])
+                    changed = True
 
-            for field in allowed_fields:
-                if field in updates:
-                    setattr(user, field, updates[field])
-                    update_list.append(field)
-
-            if update_list:
+            if changed:
                 user.last_updated_date = timezone.now()
-                update_list.append("last_updated_date")
-                user.save(update_fields=update_list)
+                user.save()
 
             return api_response(
                 0,
@@ -290,7 +366,9 @@ class UserViewSet(viewsets.ViewSet):
         except Exception as e:
             logger.exception("Profile update failed")
             return api_response(
-                1, "failure", {},
+                1,
+                "failure",
+                {},
                 "PROFILE_UPDATE_ERROR",
                 str(e)
             )
