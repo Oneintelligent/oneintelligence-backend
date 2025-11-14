@@ -39,10 +39,6 @@ class CompanySetupAPIView(APIView):
 
     @transaction.atomic
     def post(self, request):
-        """
-        POST /api/v1/company/setup/
-        Payload: { company, members[], modules[], plan{} }
-        """
         serializer = CompanySetupSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         payload = serializer.validated_data
@@ -54,7 +50,10 @@ class CompanySetupAPIView(APIView):
 
         try:
             with transaction.atomic():
-                # create company
+
+                # ------------------------------------------
+                # 1️⃣ CREATE COMPANY
+                # ------------------------------------------
                 company = Company.objects.create(
                     name=company_data.get("name"),
                     description=company_data.get("description", ""),
@@ -70,69 +69,114 @@ class CompanySetupAPIView(APIView):
                     payment_status="Pending",
                 )
 
-                created_user_ids = []
-                invite_infos = []
+                # ============================================================
+                # 2️⃣ NEW PATCH → Attach creator to company
+                # ============================================================
+                creator = request.user
+                creator.companyId = str(company.companyId)
+                creator.role = User.Role.SUPERADMIN
+                creator.status = User.Status.ACTIVE
+                creator.last_updated_date = timezone.now()
+                creator.save(update_fields=["companyId", "role", "status", "last_updated_date"])
 
-                # team members
+                created_user_ids = [str(creator.userId)]
+                invite_infos = []
+                # ============================================================
+
+                # ------------------------------------------
+                # 3️⃣ TEAM MEMBERS
+                # ------------------------------------------
                 for m in members:
                     email = m["email"].lower().strip()
                     existing = User.objects.filter(email__iexact=email).first()
 
                     if existing:
-                        # attach existing user
+                        # existing user
                         if existing.has_usable_password():
                             existing.companyId = str(company.companyId)
                             existing.role = m.get("role", existing.role)
                             existing.status = User.Status.ACTIVE
                             existing.save(update_fields=["companyId", "role", "status", "last_updated_date"])
                             created_user_ids.append(str(existing.userId))
+
                         else:
-                            invite = create_invite(email=email, inviter_user_id=request.user.userId, companyId=company.companyId)
+                            invite = create_invite(
+                                email=email,
+                                inviter_user_id=request.user.userId,
+                                companyId=company.companyId
+                            )
                             meta = send_invite_email(invite)
-                            invite_infos.append({"email": email, "invite": InviteTokenSerializer(invite).data, "meta": meta})
+                            invite_infos.append({
+                                "email": email,
+                                "invite": InviteTokenSerializer(invite).data,
+                                "meta": meta
+                            })
                             created_user_ids.append(str(existing.userId))
+
                     else:
-                        # create user without password and send invite
+                        # New user — passwordless invite
                         user = User.objects.create(
                             email=email,
                             first_name=m.get("first_name", ""),
                             last_name=m.get("last_name", ""),
                             role=m.get("role", User.Role.USER),
                             companyId=str(company.companyId),
-                            status=User.Status.INACTIVE
+                            status=User.Status.INACTIVE,
                         )
                         user.set_unusable_password()
                         user.save()
-                        invite = create_invite(email=email, inviter_user_id=request.user.userId, companyId=company.companyId)
+
+                        invite = create_invite(
+                            email=email,
+                            inviter_user_id=request.user.userId,
+                            companyId=company.companyId
+                        )
                         meta = send_invite_email(invite)
-                        invite_infos.append({"email": email, "invite": InviteTokenSerializer(invite).data, "meta": meta})
+                        invite_infos.append({
+                            "email": email,
+                            "invite": InviteTokenSerializer(invite).data,
+                            "meta": meta
+                        })
                         created_user_ids.append(str(user.userId))
 
-                # modules -> products
+                # ------------------------------------------
+                # 4️⃣ MODULES
+                # ------------------------------------------
                 product_ids = []
                 for mod in modules:
                     code = (mod.get("id") or mod.get("code") or mod.get("title") or "").upper()
                     if not code:
                         continue
+
                     product, _ = Product.objects.get_or_create(
                         code=code,
-                        defaults={"name": mod.get("title", code), "description": mod.get("description", ""), "status": Product.StatusChoices.ACTIVE}
+                        defaults={
+                            "name": mod.get("title", code),
+                            "description": mod.get("description", ""),
+                            "status": Product.StatusChoices.ACTIVE,
+                        }
                     )
                     product_ids.append(str(product.productId))
 
-                # subscription (optional)
+                # ------------------------------------------
+                # 5️⃣ SUBSCRIPTION
+                # ------------------------------------------
                 subscription_id = None
                 if plan_data:
                     plan_name = plan_data.get("id") or plan_data.get("name")
                     plan = SubscriptionPlan.objects.filter(name__iexact=plan_name).first()
                     if not plan:
-                        return api_response(status_code=status.HTTP_400_BAD_REQUEST, status="error", data={}, error_code="INVALID_PLAN", error_message=f"Plan {plan_name} not found")
+                        return api_response(
+                            status=status.HTTP_400_BAD_REQUEST,
+                            status_code="error",
+                            data={},
+                            error_code="INVALID_PLAN",
+                            error_message=f"Plan {plan_name} not found"
+                        )
 
                     is_trial = bool(plan_data.get("trial", False)) and plan.has_trial
                     start = timezone.now()
-                    end = None
-                    if is_trial:
-                        end = start + timezone.timedelta(days=plan.trial_days or 90)
+                    end = start + timezone.timedelta(days=plan.trial_days or 90) if is_trial else None
 
                     subscription = Subscriptions.objects.create(
                         plan=plan,
@@ -143,11 +187,13 @@ class CompanySetupAPIView(APIView):
                         is_trial=is_trial,
                         start_date=start,
                         end_date=end,
-                        status=Subscriptions.StatusChoices.ACTIVE if is_trial else Subscriptions.StatusChoices.INACTIVE
+                        status=Subscriptions.StatusChoices.ACTIVE if is_trial else Subscriptions.StatusChoices.INACTIVE,
                     )
                     subscription_id = str(subscription.subscriptionId)
 
-                # save company relations
+                # ------------------------------------------
+                # 6️⃣ FINALIZE COMPANY DETAILS
+                # ------------------------------------------
                 company.user_list = created_user_ids
                 company.product_ids = product_ids
                 if subscription_id:
@@ -159,10 +205,17 @@ class CompanySetupAPIView(APIView):
                     "created_user_ids": created_user_ids,
                     "product_ids": product_ids,
                     "subscription_id": subscription_id,
-                    "invites": invite_infos
+                    "invites": invite_infos,
                 }
 
                 return api_response(status_code=status.HTTP_201_CREATED, status="success", data=result)
+
         except Exception as e:
             logger.exception("Company setup failed")
-            return api_response(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, status="error", data={}, error_code="SETUP_FAILED", error_message=str(e))
+            return api_response(
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status_code="error",
+                data={},
+                error_code="SETUP_FAILED",
+                error_message=str(e)
+            )
