@@ -9,45 +9,64 @@ from drf_spectacular.views import (
 
 from rest_framework.routers import DefaultRouter
 
-# Users router
-from app.onboarding.users.views import UserViewSet
+# ================================
+# ViewSets
+# ================================
+from app.onboarding.users.views import AOIViewSet as UserViewSet
+from app.onboarding.companies.views import CompanyAOIViewSet
 
+
+# ================================
+# ROUTERS
+# ================================
 router = DefaultRouter()
+
+# /api/v1/users/...
 router.register(r"users", UserViewSet, basename="users")
 
+# /api/v1/companies/...
+router.register(r"companies", CompanyAOIViewSet, basename="companies")
+
+
+# ================================
+# URL PATTERNS
+# ================================
 urlpatterns = [
-    # ================================
-    # ADMIN
-    # ================================
+
+    # -------------------------
+    # ADMIN CONSOLE
+    # -------------------------
     path("admin/", admin.site.urls),
 
-    # ================================
-    # USERS (signup/signin/me etc.)
-    # Base: /api/v1/users/
-    # ================================
+    # -------------------------
+    # API ROUTES (Users + Companies)
+    # Base: /api/v1/
+    # -------------------------
     path("api/v1/", include(router.urls)),
 
-    # ================================
-    # COMPANY APIs (setup/settings/team/modules/subscription/activate/discount)
-    # Base: /api/v1/company/
-    # ================================
-    path("api/v1/company/", include("app.onboarding.companies.urls")),
-
-    # ================================
-    # SUBSCRIPTIONS
-    # Base: /api/v1/subscriptions/
-    # ================================
+    # -------------------------
+    # Subscriptions
+    # /api/v1/subscriptions/
+    # -------------------------
     path("api/v1/subscriptions/", include("app.subscriptions.urls")),
 
-    # ================================
-    # AI ENDPOINTS
-    # ================================
+    # -------------------------
+    # AI endpoints
+    # -------------------------
     path("api/oneintelligentai/", include("app.oneintelligentai.urls")),
 
-    # ================================
-    # API SCHEMA & SWAGGER
-    # ================================
+    # -------------------------
+    # Swagger & Redoc
+    # -------------------------
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
-    path("api/schema/swagger-ui/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
-    path("api/schema/redoc/", SpectacularRedocView.as_view(url_name="schema"), name="redoc"),
+    path(
+        "api/schema/swagger-ui/",
+        SpectacularSwaggerView.as_view(url_name="schema"),
+        name="swagger-ui"
+    ),
+    path(
+        "api/schema/redoc/",
+        SpectacularRedocView.as_view(url_name="schema"),
+        name="redoc"
+    ),
 ]
