@@ -112,13 +112,24 @@ REST_FRAMEWORK = {
     ),
 }
 
+
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(hours=6),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
     "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
     "USER_ID_FIELD": "userId",
     "USER_ID_CLAIM": "userId",
+
+    "AUTH_COOKIE": "oi_refresh_token",   # cookie name
+    "AUTH_COOKIE_SECURE": False,          # HTTPS only (turn off for local dev)
+    "AUTH_COOKIE_HTTP_ONLY": True,       # prevent JS access
+    "AUTH_COOKIE_SAMESITE": "None",      # needed for cross-domain FE
+    "AUTH_COOKIE_PATH": "/",             # cookie scope
 }
+
+
+
 
 AUTHENTICATION_BACKENDS = [
     'django.contrib.auth.backends.ModelBackend',
