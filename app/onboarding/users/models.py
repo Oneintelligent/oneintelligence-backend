@@ -48,6 +48,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     class Status(models.TextChoices):
         ACTIVE = "Active"
         INACTIVE = "Inactive"
+        PENDING = "Pending"          # <-- ADDED
         SUSPENDED = "Suspended"
 
     userId = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
