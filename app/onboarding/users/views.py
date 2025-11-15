@@ -8,6 +8,15 @@ from rest_framework.decorators import action
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResponse
 
+from django.core.mail import send_mail
+from .models import InviteToken, User
+from .serializers import (
+    InviteUserSerializer,
+    AcceptInviteSerializer,
+    MiniUserForTeamSerializer,
+    TeamMemberUpdateSerializer,
+)
+
 from .models import User
 from .serializers import (
     SignUpSerializer,
@@ -18,6 +27,7 @@ from .serializers import (
 from app.utils.response import api_response  # your standard response helper
 
 logger = logging.getLogger(__name__)
+
 
 
 @extend_schema_view(
@@ -249,42 +259,12 @@ class AOIViewSet(viewsets.ViewSet):
             return self._handle_exception(exc, where="update_me")
 
 
-# app/onboarding/users/views.py
-
-import logging
-from django.conf import settings
-from django.core.mail import send_mail
-from django.db import transaction
-from django.utils import timezone
-from rest_framework import permissions, status, viewsets
-from rest_framework.decorators import action
-from drf_spectacular.utils import extend_schema, OpenApiResponse
-
-from .models import InviteToken, User
-from .serializers import (
-    InviteUserSerializer,
-    AcceptInviteSerializer,
-    MiniUserForTeamSerializer,
-    TeamMemberUpdateSerializer,
-)
-from app.utils.response import api_response
-from app.onboarding.companies.models import Company
-
-logger = logging.getLogger(__name__)
-
-@extend_schema(tags=["Users"])
-class UsersAOIViewSet(viewsets.ViewSet):
-    permission_classes = [permissions.IsAuthenticated]
-
-    def _handle_exception(self, exc, where=""):
-        logger.exception("%s: %s", where, str(exc))
-        return api_response(500, "failure", {}, "SERVER_ERROR", str(exc))
-
     # -----------------------------------------
     # Invite a team member (Admin or company admin)
     # POST /users/invite/
     # -----------------------------------------
     @extend_schema(
+        tags=["Users"],
         summary="Invite a team member",
         request=InviteUserSerializer,
         responses={200: OpenApiResponse(description="Invite created")},
@@ -353,7 +333,7 @@ class UsersAOIViewSet(viewsets.ViewSet):
     # Accept invite / set password
     # POST /users/accept-invite/
     # -----------------------------------------
-    @extend_schema(summary="Accept invite and set password", request=AcceptInviteSerializer)
+    @extend_schema(tags=["Users"], summary="Accept invite and set password", request=AcceptInviteSerializer)
     @action(detail=False, methods=["post"], url_path="accept-invite")
     @transaction.atomic
     def accept_invite(self, request):
@@ -386,7 +366,7 @@ class UsersAOIViewSet(viewsets.ViewSet):
     # Update user (role/status/name)
     # PUT /users/<userId>/update/
     # -----------------------------------------
-    @extend_schema(summary="Update team member", request=TeamMemberUpdateSerializer)
+    @extend_schema(tags=["Users"],summary="Update team member", request=TeamMemberUpdateSerializer)
     @action(detail=True, methods=["put"], url_path="update")
     @transaction.atomic
     def update_user(self, request, pk=None):
@@ -409,7 +389,7 @@ class UsersAOIViewSet(viewsets.ViewSet):
     # Remove user (soft delete or hard) — here we delete
     # DELETE /users/<userId>/remove/
     # -----------------------------------------
-    @extend_schema(summary="Remove team member")
+    @extend_schema(tags=["Users"],summary="Remove team member")
     @action(detail=True, methods=["delete"], url_path="remove")
     @transaction.atomic
     def remove_user(self, request, pk=None):
