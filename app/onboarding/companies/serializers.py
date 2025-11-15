@@ -28,6 +28,7 @@ class CompanySerializer(serializers.ModelSerializer):
             "last_updated_date",
             "users",
             "plan",
+            "products",    
             # NEW
             "team_members",
         ]
