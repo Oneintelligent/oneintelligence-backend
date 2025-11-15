@@ -5,7 +5,7 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
-from drf_spectacular.utils import extend_schema, OpenApiResponse
+from drf_spectacular.utils import extend_schema
 
 from app.onboarding.companies.models import Company
 from app.onboarding.companies.serializers import CompanySerializer
@@ -16,27 +16,15 @@ logger = logging.getLogger(__name__)
 
 @extend_schema(tags=["Company"])
 class CompanyAOIViewSet(viewsets.ViewSet):
-    """
-    Action-oriented ViewSet for Company CRUD operations.
-    """
     permission_classes = [permissions.IsAuthenticated]
 
     # ----------------------------------------
-    # Helper
-    # ----------------------------------------
     def _handle_exception(self, exc, where=""):
         logger.exception(f"{where}: {exc}")
-        return api_response(
-            500,
-            "failure",
-            {},
-            "SERVER_ERROR",
-            str(exc)
-        )
+        return api_response(500, "failure", {}, "SERVER_ERROR", str(exc))
 
     # ============================================================
     # CREATE COMPANY
-    # POST /companies/create/
     # ============================================================
     @extend_schema(
         summary="Create new company",
@@ -50,12 +38,19 @@ class CompanyAOIViewSet(viewsets.ViewSet):
             serializer = CompanySerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
 
+            # ⭐ NEW — Extract team members BEFORE create()
+            team_members = serializer.validated_data.pop("team_members", [])
+
+            # Create company
             company = Company.objects.create(
                 **serializer.validated_data,
                 created_by_user=request.user.userId,
             )
 
-            # Link user automatically
+            # ⭐ NEW — Process team members: create or update users
+            serializer._process_team_members(company, team_members)
+
+            # Link creator to company
             user = request.user
             user.company = company
             user.save(update_fields=["company", "last_updated_date"])
@@ -67,12 +62,8 @@ class CompanyAOIViewSet(viewsets.ViewSet):
 
     # ============================================================
     # GET COMPANY
-    # GET /companies/<companyId>/detail/
     # ============================================================
-    @extend_schema(
-        summary="Get company details",
-        responses={200: CompanySerializer},
-    )
+    @extend_schema(summary="Get company details", responses={200: CompanySerializer})
     @action(detail=True, methods=["get"], url_path="detail")
     def get_company(self, request, pk=None):
         try:
@@ -81,13 +72,11 @@ class CompanyAOIViewSet(viewsets.ViewSet):
                 return api_response(404, "failure", {}, "NOT_FOUND", "Company not found")
 
             return api_response(200, "success", CompanySerializer(company).data)
-
         except Exception as exc:
             return self._handle_exception(exc, "get_company")
 
     # ============================================================
     # UPDATE COMPANY
-    # PUT /companies/<companyId>/update/
     # ============================================================
     @extend_schema(
         summary="Update company details",
@@ -104,10 +93,18 @@ class CompanyAOIViewSet(viewsets.ViewSet):
 
             serializer = CompanySerializer(company, data=request.data, partial=True)
             serializer.is_valid(raise_exception=True)
-            serializer.save()
 
+            # ⭐ NEW — Extract team members BEFORE update
+            team_members = serializer.validated_data.pop("team_members", [])
+
+            # Update basic company fields
+            for attr, value in serializer.validated_data.items():
+                setattr(company, attr, value)
             company.last_updated_date = timezone.now()
-            company.save(update_fields=["last_updated_date"])
+            company.save()
+
+            # ⭐ NEW — Add or update team members
+            serializer._process_team_members(company, team_members)
 
             return api_response(200, "success", CompanySerializer(company).data)
 
