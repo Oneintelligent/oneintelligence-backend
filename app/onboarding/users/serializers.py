@@ -6,6 +6,13 @@ from rest_framework import serializers
 
 from app.onboarding.companies.models import Company
 from app.onboarding.users.models import User
+from .models import InviteToken
+
+# Mini user serializer (reusable)
+class MiniUserForTeamSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ["userId", "first_name", "last_name", "email", "role", "status"]
 
 
 # -------------------------
@@ -123,3 +130,37 @@ class UserWithCompanySerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         exclude = ["password"]
+
+
+
+# Invite serializer (request)
+class InviteUserSerializer(serializers.Serializer):
+    first_name = serializers.CharField(required=False, allow_blank=True)
+    last_name = serializers.CharField(required=False, allow_blank=True)
+    email = serializers.EmailField()
+    role = serializers.ChoiceField(choices=User.Role.choices, default=User.Role.USER)
+
+    def validate_email(self, value):
+        # If a user with email already exists and is Active, block
+        existing = User.objects.filter(email__iexact=value.strip().lower()).first()
+        if existing and existing.status == User.Status.ACTIVE:
+            raise serializers.ValidationError("A user with this email already exists.")
+        return value.strip().lower()
+
+# Set password (accept invite)
+class AcceptInviteSerializer(serializers.Serializer):
+    token = serializers.UUIDField()
+    password = serializers.CharField(write_only=True)
+
+    def validate_password(self, value):
+        # reuse your password policy if desired; keep simple here
+        if len(value) < 8:
+            raise serializers.ValidationError("Password must be at least 8 characters.")
+        return value
+
+# Update user (role/status)
+class TeamMemberUpdateSerializer(serializers.Serializer):
+    role = serializers.ChoiceField(choices=User.Role.choices, required=False)
+    status = serializers.ChoiceField(choices=User.Status.choices, required=False)
+    first_name = serializers.CharField(required=False, allow_blank=True)
+    last_name = serializers.CharField(required=False, allow_blank=True)

@@ -247,3 +247,182 @@ class AOIViewSet(viewsets.ViewSet):
             return api_response(status_code=200, status="success", data={"message": "Profile updated", "user": UserWithCompanySerializer(user).data})
         except Exception as exc:
             return self._handle_exception(exc, where="update_me")
+
+
+# app/onboarding/users/views.py
+
+import logging
+from django.conf import settings
+from django.core.mail import send_mail
+from django.db import transaction
+from django.utils import timezone
+from rest_framework import permissions, status, viewsets
+from rest_framework.decorators import action
+from drf_spectacular.utils import extend_schema, OpenApiResponse
+
+from .models import InviteToken, User
+from .serializers import (
+    InviteUserSerializer,
+    AcceptInviteSerializer,
+    MiniUserForTeamSerializer,
+    TeamMemberUpdateSerializer,
+)
+from app.utils.response import api_response
+from app.onboarding.companies.models import Company
+
+logger = logging.getLogger(__name__)
+
+@extend_schema(tags=["Users"])
+class UsersAOIViewSet(viewsets.ViewSet):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def _handle_exception(self, exc, where=""):
+        logger.exception("%s: %s", where, str(exc))
+        return api_response(500, "failure", {}, "SERVER_ERROR", str(exc))
+
+    # -----------------------------------------
+    # Invite a team member (Admin or company admin)
+    # POST /users/invite/
+    # -----------------------------------------
+    @extend_schema(
+        summary="Invite a team member",
+        request=InviteUserSerializer,
+        responses={200: OpenApiResponse(description="Invite created")},
+    )
+    @action(detail=False, methods=["post"], url_path="invite")
+    @transaction.atomic
+    def invite(self, request):
+        try:
+            # Only authenticated users can invite — you may want to check role
+            serializer = InviteUserSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            data = serializer.validated_data
+
+            # require company context — inviter's company
+            inviter = request.user
+            company = inviter.company
+            if not company:
+                return api_response(400, "failure", {}, "NO_COMPANY", "Inviter must belong to a company")
+
+            # If user exists but inactive/pending, reuse user object; else create
+            user = User.objects.filter(email__iexact=data["email"]).first()
+            created = False
+            if not user:
+                user = User.objects.create(
+                    email=data["email"],
+                    first_name=data.get("first_name", ""),
+                    last_name=data.get("last_name", ""),
+                    role=data.get("role", User.Role.USER),
+                    status=User.Status.PENDING,
+                    company=company,
+                )
+                user.set_unusable_password()
+                user.save()
+                created = True
+            else:
+                # update company and role if necessary, mark pending if no password
+                user.company = company
+                user.role = data.get("role", user.role)
+                user.status = User.Status.PENDING
+                user.set_unusable_password()
+                user.save()
+
+            # create invite token (one-per-user)
+            InviteToken.objects.filter(user=user).delete()
+            invite = InviteToken.create_for_user(user)
+
+            # build invite link (frontend route)
+            frontend_base = getattr(settings, "FRONTEND_BASE", "http://localhost:3000")
+            invite_url = f"{frontend_base}/auth/set-password?token={invite.token}"
+
+            # send email (basic)
+            subject = f"Invitation to join {company.name} on OneIntelligence"
+            message = f"Hi {user.first_name or ''},\n\nYou were invited to join {company.name} on OneIntelligence. Click the link to set your password and finish setup:\n\n{invite_url}\n\nThis link expires on {invite.expires_at}.\n\nIf you weren't expecting this, you can ignore this email."
+            from_email = settings.DEFAULT_FROM_EMAIL
+            recipient_list = [user.email]
+            try:
+                send_mail(subject, message, from_email, recipient_list, fail_silently=False)
+            except Exception:
+                logger.exception("Failed to send invite email")
+
+            return api_response(200, "success", {"user": MiniUserForTeamSerializer(user).data, "invite_token": str(invite.token)})
+        except Exception as exc:
+            return self._handle_exception(exc, "invite")
+
+    # -----------------------------------------
+    # Accept invite / set password
+    # POST /users/accept-invite/
+    # -----------------------------------------
+    @extend_schema(summary="Accept invite and set password", request=AcceptInviteSerializer)
+    @action(detail=False, methods=["post"], url_path="accept-invite")
+    @transaction.atomic
+    def accept_invite(self, request):
+        try:
+            serializer = AcceptInviteSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            token = serializer.validated_data["token"]
+            raw_pwd = serializer.validated_data["password"]
+
+            invite = InviteToken.objects.filter(token=token).select_related("user").first()
+            if not invite or not invite.is_valid():
+                return api_response(400, "failure", {}, "INVALID_TOKEN", "Invite token is invalid or expired")
+
+            user = invite.user
+            user.password = make_password(raw_pwd)
+            user.status = User.Status.ACTIVE
+            user.last_login_date = timezone.now()
+            user.save(update_fields=["password", "status", "last_login_date"])
+
+            # remove invite token
+            invite.delete()
+
+            # Optionally auto-login: return access token (use your existing JWT pattern)
+            # For simplicity, return user data
+            return api_response(200, "success", {"user": MiniUserForTeamSerializer(user).data})
+        except Exception as exc:
+            return self._handle_exception(exc, "accept_invite")
+
+    # -----------------------------------------
+    # Update user (role/status/name)
+    # PUT /users/<userId>/update/
+    # -----------------------------------------
+    @extend_schema(summary="Update team member", request=TeamMemberUpdateSerializer)
+    @action(detail=True, methods=["put"], url_path="update")
+    @transaction.atomic
+    def update_user(self, request, pk=None):
+        try:
+            user = User.objects.filter(userId=pk).first()
+            if not user:
+                return api_response(404, "failure", {}, "NOT_FOUND", "User not found")
+
+            serializer = TeamMemberUpdateSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            for k, v in serializer.validated_data.items():
+                setattr(user, k, v)
+            user.last_updated_date = timezone.now()
+            user.save()
+            return api_response(200, "success", {"user": MiniUserForTeamSerializer(user).data})
+        except Exception as exc:
+            return self._handle_exception(exc, "update_user")
+
+    # -----------------------------------------
+    # Remove user (soft delete or hard) — here we delete
+    # DELETE /users/<userId>/remove/
+    # -----------------------------------------
+    @extend_schema(summary="Remove team member")
+    @action(detail=True, methods=["delete"], url_path="remove")
+    @transaction.atomic
+    def remove_user(self, request, pk=None):
+        try:
+            user = User.objects.filter(userId=pk).first()
+            if not user:
+                return api_response(404, "failure", {}, "NOT_FOUND", "User not found")
+
+            # Prevent removing yourself (optional)
+            if request.user.userId == user.userId:
+                return api_response(400, "failure", {}, "CANNOT_REMOVE_SELF", "Cannot remove yourself")
+
+            user.delete()
+            return api_response(200, "success", {"message": "User removed"})
+        except Exception as exc:
+            return self._handle_exception(exc, "remove_user")
