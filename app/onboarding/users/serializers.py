@@ -41,7 +41,6 @@ class MiniUserSerializer(serializers.ModelSerializer):
 # (used in signin/signup/me response)
 # =======================================================
 class CompanyInUserSerializer(serializers.ModelSerializer):
-    users = serializers.SerializerMethodField()
 
     class Meta:
         model = Company
