@@ -56,7 +56,7 @@ CORS_ALLOWED_ORIGINS = [
 # Optional: allow cookies (for CSRF/auth)
 CORS_ALLOW_CREDENTIALS = True
 
-CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_ALL_ORIGINS = False
 
 
 ROOT_URLCONF = 'config.urls'
@@ -142,16 +142,11 @@ SPECTACULAR_SETTINGS = {
     "DESCRIPTION": "OneIntelligence Backend API Documentation",
     "VERSION": "1.0.0",
 
-    # 👇 THIS IS THE IMPORTANT PART
-    "SERVE_INCLUDE_SCHEMA": False,
+    # MUST be true for Swagger auth to work correctly
+    "SERVE_INCLUDE_SCHEMA": True,
     "COMPONENT_SPLIT_REQUEST": True,
 
-    "SECURITY": [
-        {
-            "bearerAuth": []
-        }
-    ],
-
+    # Security definition for Swagger
     "SECURITY_SCHEMES": {
         "bearerAuth": {
             "type": "http",
@@ -159,5 +154,9 @@ SPECTACULAR_SETTINGS = {
             "bearerFormat": "JWT",
         }
     },
-}
 
+    # Apply security by default
+    "SECURITY": [
+        {"bearerAuth": []}
+    ],
+}

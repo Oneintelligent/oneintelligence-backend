@@ -9,22 +9,20 @@ from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResponse
 
 from django.core.mail import send_mail
-from .models import InviteToken, User
-from .serializers import (
-    InviteUserSerializer,
-    AcceptInviteSerializer,
-    MiniUserForTeamSerializer,
-    TeamMemberUpdateSerializer,
-)
 
-from .models import User
-from .serializers import (
+from app.onboarding.users.models import User, InviteToken
+from app.onboarding.users.serializers import (
     SignUpSerializer,
     SignInSerializer,
     UserWithCompanySerializer,
     UserProfileUpdateSerializer,
+    InviteUserSerializer,
+    AcceptInviteSerializer,
+    TeamMemberUpdateSerializer,
+    MiniUserSerializer,
 )
-from app.utils.response import api_response  # your standard response helper
+
+from app.utils.response import api_response
 
 logger = logging.getLogger(__name__)
 
@@ -48,10 +46,13 @@ class AOIViewSet(viewsets.ViewSet):
             return [permissions.AllowAny()]
         return [permissions.IsAuthenticated()]
 
-    # ---------- helpers ----------
+    # -------------------------------------------------------
+    # Helpers
+    # -------------------------------------------------------
     def _set_refresh_cookie(self, response, refresh_token: str):
         cookie_name = settings.SIMPLE_JWT.get("AUTH_COOKIE", "oi_refresh_token")
         cookie_path = settings.SIMPLE_JWT.get("AUTH_COOKIE_PATH", "/")
+
         response.set_cookie(
             key=cookie_name,
             value=refresh_token,
@@ -71,15 +72,10 @@ class AOIViewSet(viewsets.ViewSet):
             error_message=str(exc),
         )
 
-    # ---------------------------
-    # Signup
-    # ---------------------------
-    @extend_schema(
-        tags=["User Authentication"],
-        summary="Register new user (auto-login)",
-        request=SignUpSerializer,
-        responses={200: OpenApiResponse(description="User created + tokens")},
-    )
+    # -------------------------------------------------------
+    # Sign Up
+    # -------------------------------------------------------
+    @extend_schema(tags=["Auth"], summary="Register new user", request=SignUpSerializer)
     @action(detail=False, methods=["post"], url_path="signup")
     def signup(self, request):
         try:
@@ -92,204 +88,182 @@ class AOIViewSet(viewsets.ViewSet):
             refresh = RefreshToken.for_user(user)
             access = str(refresh.access_token)
 
-            user.last_login_date = timezone.now()
-            user.save(update_fields=["last_login_date"])
+            # refresh last_login
+            user.last_login = timezone.now()
+            user.save(update_fields=["last_login"])
 
-            payload = {"user": UserWithCompanySerializer(user).data, "access": access}
-            res = api_response(status_code=200, status="success", data=payload)
+            payload = {
+                "user": UserWithCompanySerializer(user).data,
+                "access": access,
+            }
+            res = api_response(200, "success", payload)
             self._set_refresh_cookie(res, str(refresh))
             return res
-        except Exception as exc:
-            return self._handle_exception(exc, where="signup")
 
-    # ---------------------------
-    # Signin
-    # ---------------------------
-    @extend_schema(
-        tags=["User Authentication"],
-        summary="Sign in",
-        request=SignInSerializer,
-        responses={200: OpenApiResponse(description="Sign in successful")},
-    )
+        except Exception as exc:
+            return self._handle_exception(exc, "signup")
+
+    # -------------------------------------------------------
+    # Sign In
+    # -------------------------------------------------------
+    @extend_schema(tags=["Auth"], summary="Sign in", request=SignInSerializer)
     @action(detail=False, methods=["post"], url_path="signin")
     def signin(self, request):
         try:
             serializer = SignInSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
 
-            email = serializer.validated_data["email"].lower().strip()
+            email = serializer.validated_data["email"]
             password = serializer.validated_data["password"]
 
-            user = authenticate(request=request, email=email, password=password)
+            # username=<email>
+            user = authenticate(request=request, username=email, password=password)
+
             if not user:
                 return api_response(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    status="failure",
-                    data={},
-                    error_code="INVALID_CREDENTIALS",
-                    error_message="Invalid email or password.",
+                    401, "failure", {},
+                    "INVALID_CREDENTIALS",
+                    "Invalid email or password."
                 )
 
-            if getattr(user, "status", "").lower() != "active":
+            if user.status != User.Status.ACTIVE:
                 return api_response(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    status="failure",
-                    data={},
-                    error_code="INACTIVE_ACCOUNT",
-                    error_message="This account is inactive.",
+                    403, "failure", {},
+                    "INACTIVE_ACCOUNT",
+                    "This account is inactive."
                 )
 
             refresh = RefreshToken.for_user(user)
             access = str(refresh.access_token)
 
-            user.last_login_date = timezone.now()
-            user.save(update_fields=["last_login_date"])
+            user.last_login = timezone.now()
+            user.save(update_fields=["last_login"])
 
             payload = {"user": UserWithCompanySerializer(user).data, "access": access}
-            res = api_response(status_code=200, status="success", data=payload)
+            res = api_response(200, "success", payload)
             self._set_refresh_cookie(res, str(refresh))
             return res
-        except Exception as exc:
-            return self._handle_exception(exc, where="signin")
 
-    # ---------------------------
-    # Signout
-    # ---------------------------
-    @extend_schema(tags=["User Authentication"], summary="Sign out (clear refresh cookie)")
+        except Exception as exc:
+            return self._handle_exception(exc, "signin")
+
+    # -------------------------------------------------------
+    # Sign Out
+    # -------------------------------------------------------
+    @extend_schema(tags=["Auth"], summary="Sign out")
     @action(detail=False, methods=["post"], url_path="signout")
     def signout(self, request):
         try:
-            res = api_response(status_code=200, status="success", data={"message": "Signed out"})
+            res = api_response(200, "success", {"message": "Signed out"})
             cookie_name = settings.SIMPLE_JWT.get("AUTH_COOKIE", "oi_refresh_token")
             cookie_path = settings.SIMPLE_JWT.get("AUTH_COOKIE_PATH", "/")
-            res.delete_cookie(key=cookie_name, path=cookie_path)
+            res.delete_cookie(cookie_name, path=cookie_path)
             return res
         except Exception as exc:
-            return self._handle_exception(exc, where="signout")
+            return self._handle_exception(exc, "signout")
 
-    # ---------------------------
-    # Token refresh (cookie)
-    # ---------------------------
-    @extend_schema(tags=["Tokens"], summary="Refresh access token (HttpOnly cookie)", responses={200: OpenApiResponse(description="New access token")})
+    # -------------------------------------------------------
+    # Refresh Token
+    # -------------------------------------------------------
+    @extend_schema(tags=["Auth"], summary="Refresh JWT access token")
     @action(detail=False, methods=["post"], url_path="token/refresh")
     def token_refresh(self, request):
         try:
             cookie_name = settings.SIMPLE_JWT.get("AUTH_COOKIE", "oi_refresh_token")
             refresh_token = request.COOKIES.get(cookie_name)
+
             if not refresh_token:
-                return api_response(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    status="failure",
-                    data={},
-                    error_code="MISSING_REFRESH_COOKIE",
-                    error_message="Refresh cookie missing.",
-                )
+                return api_response(400, "failure", {}, "NO_REFRESH_TOKEN", "Refresh cookie missing")
 
             try:
-                old_refresh = RefreshToken(refresh_token)
-            except TokenError as e:
-                return api_response(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    status="failure",
-                    data={},
-                    error_code="INVALID_REFRESH",
-                    error_message="Invalid refresh token.",
-                )
+                old = RefreshToken(refresh_token)
+            except TokenError:
+                return api_response(401, "failure", {}, "INVALID_REFRESH", "Invalid refresh token")
 
-            user_id_claim = settings.SIMPLE_JWT.get("USER_ID_CLAIM", "user_id")
-            user_id = old_refresh.payload.get(user_id_claim)
-            if not user_id:
-                return api_response(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    status="failure",
-                    data={},
-                    error_code="INVALID_TOKEN",
-                    error_message="Could not extract user_id from token.",
-                )
-
+            user_id = old.payload.get("user_id")
             user = User.objects.filter(userId=user_id).first()
             if not user:
-                return api_response(status_code=status.HTTP_404_NOT_FOUND, status="failure", data={}, error_code="USER_NOT_FOUND", error_message="User not found.")
+                return api_response(404, "failure", {}, "USER_NOT_FOUND", "User not found")
 
             new_refresh = RefreshToken.for_user(user)
-            new_access = str(new_refresh.access_token)
+            access = str(new_refresh.access_token)
 
-            res = api_response(status_code=200, status="success", data={"access": new_access})
+            res = api_response(200, "success", {"access": access})
             self._set_refresh_cookie(res, str(new_refresh))
             return res
-        except Exception as exc:
-            return self._handle_exception(exc, where="token_refresh")
 
-    # ---------------------------
-    # Get current user (me)
-    # ---------------------------
-    @extend_schema(
-        tags=["Users"],
-        summary="Get current authenticated user (with company)",
-        responses={200: UserWithCompanySerializer},
-    )
+        except Exception as exc:
+            return self._handle_exception(exc, "token_refresh")
+
+    # -------------------------------------------------------
+    # Current User (me)
+    # -------------------------------------------------------
+    @extend_schema(tags=["Users"], summary="Get authenticated user")
     @action(detail=False, methods=["get"], url_path="me")
     def get_me(self, request):
         try:
-            user = request.user
-            # ensure company is prefetched if available
-            user = User.objects.select_related("company").filter(userId=user.userId).first() or user
-            return api_response(status_code=200, status="success", data=UserWithCompanySerializer(user).data)
+            user = User.objects.select_related("company").get(userId=request.user.userId)
+            return api_response(200, "success", UserWithCompanySerializer(user).data)
         except Exception as exc:
-            return self._handle_exception(exc, where="get_me")
+            return self._handle_exception(exc, "get_me")
 
-    # ---------------------------
-    # Update current user (me)
-    # ---------------------------
-    @extend_schema(tags=["Users"], summary="Update current user", request=UserProfileUpdateSerializer)
+    # -------------------------------------------------------
+    # Update Me
+    # -------------------------------------------------------
+    @extend_schema(tags=["Users"], summary="Update current user profile")
     @action(detail=False, methods=["put"], url_path="me/update")
     def update_me(self, request):
         try:
-            serializer = UserProfileUpdateSerializer(data=request.data)
+            serializer = UserProfileUpdateSerializer(
+                data=request.data,
+                context={"request": request}
+            )
             serializer.is_valid(raise_exception=True)
 
             user = request.user
-            for k, v in serializer.validated_data.items():
-                setattr(user, k, v)
+            for key, value in serializer.validated_data.items():
+                setattr(user, key, value)
+
             user.last_updated_date = timezone.now()
             user.save()
 
-            return api_response(status_code=200, status="success", data={"message": "Profile updated", "user": UserWithCompanySerializer(user).data})
+            return api_response(
+                200, "success",
+                {"message": "Profile updated", "user": UserWithCompanySerializer(user).data}
+            )
         except Exception as exc:
-            return self._handle_exception(exc, where="update_me")
+            return self._handle_exception(exc, "update_me")
 
-
-    # -----------------------------------------
-    # Invite a team member (Admin or company admin)
-    # POST /users/invite/
-    # -----------------------------------------
-    @extend_schema(
-        tags=["Users"],
-        summary="Invite a team member",
-        request=InviteUserSerializer,
-        responses={200: OpenApiResponse(description="Invite created")},
-    )
+    # -------------------------------------------------------
+    # Invite User
+    # -------------------------------------------------------
+    @extend_schema(tags=["Users"], summary="Invite a new or existing user")
     @action(detail=False, methods=["post"], url_path="invite")
     @transaction.atomic
     def invite(self, request):
         try:
-            # Only authenticated users can invite — you may want to check role
             serializer = InviteUserSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
             data = serializer.validated_data
 
-            # require company context — inviter's company
             inviter = request.user
             company = inviter.company
+
             if not company:
                 return api_response(400, "failure", {}, "NO_COMPANY", "Inviter must belong to a company")
 
-            # If user exists but inactive/pending, reuse user object; else create
-            user = User.objects.filter(email__iexact=data["email"]).first()
-            created = False
+            email = data["email"].lower()
+
+            # disallow self-invite
+            if email == inviter.email.lower():
+                return api_response(400, "failure", {}, "CANNOT_INVITE_SELF", "You cannot invite yourself.")
+
+            user = User.objects.filter(email__iexact=email).first()
+
             if not user:
+                # new user
                 user = User.objects.create(
-                    email=data["email"],
+                    email=email,
                     first_name=data.get("first_name", ""),
                     last_name=data.get("last_name", ""),
                     role=data.get("role", User.Role.USER),
@@ -298,75 +272,69 @@ class AOIViewSet(viewsets.ViewSet):
                 )
                 user.set_unusable_password()
                 user.save()
-                created = True
+
             else:
-                # update company and role if necessary, mark pending if no password
+                # limit hijacking: block if other company
+                if user.company and user.company != company:
+                    return api_response(400, "failure", {}, "WRONG_COMPANY", "User belongs to another company")
+
+                # update role + company
                 user.company = company
                 user.role = data.get("role", user.role)
                 user.status = User.Status.PENDING
-                user.set_unusable_password()
                 user.save()
 
-            # create invite token (one-per-user)
+            # new invite token (delete old)
             InviteToken.objects.filter(user=user).delete()
             invite = InviteToken.create_for_user(user)
 
-            # build invite link (frontend route)
-            frontend_base = getattr(settings, "FRONTEND_BASE", "http://localhost:3000")
-            invite_url = f"{frontend_base}/auth/set-password?token={invite.token}"
+            frontend_url = settings.FRONTEND_BASE
+            invite_link = f"{frontend_url}/auth/set-password?token={invite.token}"
 
-            # send email (basic)
-            subject = f"Invitation to join {company.name} on OneIntelligence"
-            message = f"Hi {user.first_name or ''},\n\nYou were invited to join {company.name} on OneIntelligence. Click the link to set your password and finish setup:\n\n{invite_url}\n\nThis link expires on {invite.expires_at}.\n\nIf you weren't expecting this, you can ignore this email."
-            from_email = settings.DEFAULT_FROM_EMAIL
-            recipient_list = [user.email]
+            # best effort email send
             try:
-                send_mail(subject, message, from_email, recipient_list, fail_silently=False)
+                send_mail(
+                    f"You're invited to {company.name}",
+                    f"Click to join: {invite_link}",
+                    settings.DEFAULT_FROM_EMAIL,
+                    [email],
+                )
             except Exception:
                 logger.exception("Failed to send invite email")
 
-            return api_response(200, "success", {"user": MiniUserForTeamSerializer(user).data, "invite_token": str(invite.token)})
+            return api_response(
+                200, "success",
+                {"user": MiniUserSerializer(user).data, "invite_token": str(invite.token)}
+            )
         except Exception as exc:
             return self._handle_exception(exc, "invite")
 
-    # -----------------------------------------
-    # Accept invite / set password
-    # POST /users/accept-invite/
-    # -----------------------------------------
-    @extend_schema(tags=["Users"], summary="Accept invite and set password", request=AcceptInviteSerializer)
+    # -------------------------------------------------------
+    # Accept Invite
+    # -------------------------------------------------------
+    @extend_schema(tags=["Users"], summary="Accept invite and set password")
     @action(detail=False, methods=["post"], url_path="accept-invite")
     @transaction.atomic
     def accept_invite(self, request):
         try:
             serializer = AcceptInviteSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
-            token = serializer.validated_data["token"]
-            raw_pwd = serializer.validated_data["password"]
 
-            invite = InviteToken.objects.filter(token=token).select_related("user").first()
-            if not invite or not invite.is_valid():
-                return api_response(400, "failure", {}, "INVALID_TOKEN", "Invite token is invalid or expired")
+            # delegate logic to serializer
+            user = serializer.save()
 
-            user = invite.user
-            user.password = make_password(raw_pwd)
-            user.status = User.Status.ACTIVE
-            user.last_login_date = timezone.now()
-            user.save(update_fields=["password", "status", "last_login_date"])
+            return api_response(
+                200, "success",
+                {"user": MiniUserSerializer(user).data}
+            )
 
-            # remove invite token
-            invite.delete()
-
-            # Optionally auto-login: return access token (use your existing JWT pattern)
-            # For simplicity, return user data
-            return api_response(200, "success", {"user": MiniUserForTeamSerializer(user).data})
         except Exception as exc:
             return self._handle_exception(exc, "accept_invite")
 
-    # -----------------------------------------
-    # Update user (role/status/name)
-    # PUT /users/<userId>/update/
-    # -----------------------------------------
-    @extend_schema(tags=["Users"],summary="Update team member", request=TeamMemberUpdateSerializer)
+    # -------------------------------------------------------
+    # Update User (admin/team action)
+    # -------------------------------------------------------
+    @extend_schema(tags=["Users"], summary="Update team member")
     @action(detail=True, methods=["put"], url_path="update")
     @transaction.atomic
     def update_user(self, request, pk=None):
@@ -375,21 +343,26 @@ class AOIViewSet(viewsets.ViewSet):
             if not user:
                 return api_response(404, "failure", {}, "NOT_FOUND", "User not found")
 
+            if user.company != request.user.company:
+                return api_response(403, "failure", {}, "NOT_YOUR_COMPANY", "Cannot update user outside your company")
+
             serializer = TeamMemberUpdateSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
-            for k, v in serializer.validated_data.items():
-                setattr(user, k, v)
+
+            for key, value in serializer.validated_data.items():
+                setattr(user, key, value)
+
             user.last_updated_date = timezone.now()
             user.save()
-            return api_response(200, "success", {"user": MiniUserForTeamSerializer(user).data})
+
+            return api_response(200, "success", {"user": MiniUserSerializer(user).data})
         except Exception as exc:
             return self._handle_exception(exc, "update_user")
 
-    # -----------------------------------------
-    # Remove user (soft delete or hard) — here we delete
-    # DELETE /users/<userId>/remove/
-    # -----------------------------------------
-    @extend_schema(tags=["Users"],summary="Remove team member")
+    # -------------------------------------------------------
+    # Remove user (soft or hard delete)
+    # -------------------------------------------------------
+    @extend_schema(tags=["Users"], summary="Remove a team member")
     @action(detail=True, methods=["delete"], url_path="remove")
     @transaction.atomic
     def remove_user(self, request, pk=None):
@@ -398,11 +371,14 @@ class AOIViewSet(viewsets.ViewSet):
             if not user:
                 return api_response(404, "failure", {}, "NOT_FOUND", "User not found")
 
-            # Prevent removing yourself (optional)
-            if request.user.userId == user.userId:
+            if user.company != request.user.company:
+                return api_response(403, "failure", {}, "NOT_YOUR_COMPANY", "Cannot remove user outside your company")
+
+            if user.userId == request.user.userId:
                 return api_response(400, "failure", {}, "CANNOT_REMOVE_SELF", "Cannot remove yourself")
 
             user.delete()
+
             return api_response(200, "success", {"message": "User removed"})
         except Exception as exc:
             return self._handle_exception(exc, "remove_user")

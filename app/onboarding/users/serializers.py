@@ -3,21 +3,16 @@
 import re
 from django.contrib.auth.hashers import make_password
 from rest_framework import serializers
+from django.utils import timezone
+from django.conf import settings
 
+from app.onboarding.users.models import User, InviteToken
 from app.onboarding.companies.models import Company
-from app.onboarding.users.models import User
-from .models import InviteToken
-
-# Mini user serializer (reusable)
-class MiniUserForTeamSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = User
-        fields = ["userId", "first_name", "last_name", "email", "role", "status"]
 
 
-# -------------------------
-# helper: password strength
-# -------------------------
+# =======================================================
+# PASSWORD VALIDATION HELPER
+# =======================================================
 def validate_strong_password(password: str) -> str:
     if len(password) < 8:
         raise serializers.ValidationError("Password must be at least 8 characters long.")
@@ -32,73 +27,19 @@ def validate_strong_password(password: str) -> str:
     return password
 
 
-# -------------------------
-# signup serializer
-# -------------------------
-class SignUpSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True)
-
-    class Meta:
-        model = User
-        fields = ["email", "password", "first_name", "last_name", "phone", "role"]
-
-    def validate_email(self, value):
-        v = value.lower().strip()
-        if User.objects.filter(email__iexact=v).exists():
-            raise serializers.ValidationError("Email already exists.")
-        return v
-
-    def validate_password(self, value):
-        return validate_strong_password(value)
-
-    def create(self, validated_data):
-        raw_pwd = validated_data.pop("password")
-        validated_data["email"] = validated_data["email"].lower().strip()
-        validated_data["password"] = make_password(raw_pwd)
-        return User.objects.create(**validated_data)
-
-
-# -------------------------
-# signin serializer (no strength check)
-# -------------------------
-class SignInSerializer(serializers.Serializer):
-    email = serializers.EmailField()
-    password = serializers.CharField(write_only=True)
-
-    def validate_email(self, value):
-        v = value.lower().strip()
-        if not User.objects.filter(email__iexact=v).exists():
-            raise serializers.ValidationError("No account found with this email.")
-        return v
-
-
-# -------------------------
-# profile update serializer
-# -------------------------
-class UserProfileUpdateSerializer(serializers.Serializer):
-    first_name = serializers.CharField(required=False, allow_blank=True)
-    last_name = serializers.CharField(required=False, allow_blank=True)
-    email = serializers.EmailField(required=False)
-    phone = serializers.CharField(required=False, allow_blank=True)
-    profile_picture_url = serializers.CharField(required=False, allow_blank=True)
-    language_preference = serializers.CharField(required=False, allow_blank=True)
-    time_zone = serializers.CharField(required=False, allow_blank=True)
-    settings = serializers.DictField(required=False)
-
-
-# -----------------------------------------
-# USER OBJECT USED INSIDE COMPANY RESPONSE
-# -----------------------------------------
+# =======================================================
+# MINI USER SERIALIZER (lightweight, reused everywhere)
+# =======================================================
 class MiniUserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ["userId", "first_name", "last_name", "email", "role", "status"]
 
 
-# -----------------------------------------
-# COMPANY SERIALIZER FOR AUTH RESPONSES
-# includes plan, products and users list
-# -----------------------------------------
+# =======================================================
+# COMPANY SNIPPET INSIDE USER OBJECT
+# (used in signin/signup/me response)
+# =======================================================
 class CompanyInUserSerializer(serializers.ModelSerializer):
     users = serializers.SerializerMethodField()
 
@@ -110,30 +51,107 @@ class CompanyInUserSerializer(serializers.ModelSerializer):
             "email",
             "phone",
             "address",
-            "country",
-            "plan",
-            "products",
-            "users",
-        ]
+            "country"
+          ]
 
     def get_users(self, company):
-        qs = User.objects.filter(company=company).order_by("created_date")
+        qs = (
+            User.objects.filter(company=company)
+            .select_related("company")
+            .order_by("created_date")
+        )
         return MiniUserSerializer(qs, many=True).data
 
 
-# ---------------------------------------------------------
-# MAIN SERIALIZER: USER + COMPANY (USED IN SIGNIN / SIGNUP / ME)
-# ---------------------------------------------------------
+# =======================================================
+# MAIN USER SERIALIZER (EXCLUDES PASSWORD)
+# =======================================================
 class UserWithCompanySerializer(serializers.ModelSerializer):
     company = CompanyInUserSerializer(read_only=True)
 
     class Meta:
         model = User
-        exclude = ["password"]
+        exclude = ["password", "is_superuser", "is_staff"]
 
 
+# =======================================================
+# SIGN-UP
+# =======================================================
+class SignUpSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True)
+    companyId = serializers.UUIDField(required=False)
 
-# Invite serializer (request)
+    class Meta:
+        model = User
+        fields = ["email", "password", "first_name", "last_name", "phone", "role", "companyId"]
+
+    def validate_email(self, value):
+        email = value.lower().strip()
+        if User.objects.filter(email__iexact=email).exists():
+            raise serializers.ValidationError("Email already exists.")
+        return email
+
+    def validate_password(self, value):
+        return validate_strong_password(value)
+
+    def create(self, validated_data):
+        raw_pwd = validated_data.pop("password")
+        company_id = validated_data.pop("companyId", None)
+
+        email = validated_data.pop("email").lower().strip()  # pop email here
+
+        # optional: attach company
+        company = None
+        if company_id:
+            company = Company.objects.filter(companyId=company_id).first()
+
+        user = User.objects.create(
+            **validated_data,
+            company=company,
+            email=email,
+            password=make_password(raw_pwd),
+            status=User.Status.ACTIVE,
+        )
+        return user
+
+
+# =======================================================
+# SIGN-IN (AUTH ONLY — DO NOT LEAK ACCOUNT EXISTENCE)
+# =======================================================
+class SignInSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    password = serializers.CharField(write_only=True)
+
+    def validate_email(self, value):
+        return value.lower().strip()
+
+
+# =======================================================
+# USER PROFILE UPDATE
+# =======================================================
+class UserProfileUpdateSerializer(serializers.Serializer):
+    first_name = serializers.CharField(required=False, allow_blank=True)
+    last_name = serializers.CharField(required=False, allow_blank=True)
+    email = serializers.EmailField(required=False)
+    phone = serializers.CharField(required=False, allow_blank=True)
+    profile_picture_url = serializers.CharField(required=False, allow_blank=True)
+    language_preference = serializers.CharField(required=False, allow_blank=True)
+    time_zone = serializers.CharField(required=False, allow_blank=True)
+    preferences = serializers.DictField(required=False)
+
+    def validate_email(self, value):
+        email = value.lower().strip()
+        user = self.context["request"].user
+
+        if User.objects.exclude(userId=user.userId).filter(email__iexact=email).exists():
+            raise serializers.ValidationError("This email is already used by another account.")
+
+        return email
+
+
+# =======================================================
+# INVITE USER
+# =======================================================
 class InviteUserSerializer(serializers.Serializer):
     first_name = serializers.CharField(required=False, allow_blank=True)
     last_name = serializers.CharField(required=False, allow_blank=True)
@@ -141,26 +159,55 @@ class InviteUserSerializer(serializers.Serializer):
     role = serializers.ChoiceField(choices=User.Role.choices, default=User.Role.USER)
 
     def validate_email(self, value):
-        # If a user with email already exists and is Active, block
-        existing = User.objects.filter(email__iexact=value.strip().lower()).first()
-        if existing and existing.status == User.Status.ACTIVE:
-            raise serializers.ValidationError("A user with this email already exists.")
-        return value.strip().lower()
+        email = value.lower().strip()
+        existing = User.objects.filter(email__iexact=email).first()
 
-# Set password (accept invite)
+        if existing and existing.status == User.Status.ACTIVE:
+            raise serializers.ValidationError("A user with this email already exists and is active.")
+
+        return email
+
+
+# =======================================================
+# ACCEPT INVITE
+# =======================================================
 class AcceptInviteSerializer(serializers.Serializer):
     token = serializers.UUIDField()
     password = serializers.CharField(write_only=True)
 
-    def validate_password(self, value):
-        # reuse your password policy if desired; keep simple here
-        if len(value) < 8:
-            raise serializers.ValidationError("Password must be at least 8 characters.")
-        return value
+    def validate(self, attrs):
+        token = attrs["token"]
+        password = attrs["password"]
 
-# Update user (role/status)
+        invite = InviteToken.objects.filter(token=token).first()
+
+        if not invite or not invite.is_valid():
+            raise serializers.ValidationError("Invalid or expired invite token.")
+
+        validate_strong_password(password)
+
+        attrs["invite"] = invite
+        return attrs
+
+    def save(self):
+        invite = self.validated_data["invite"]
+        password = self.validated_data["password"]
+
+        user = invite.user
+        user.set_password(password)
+        user.status = User.Status.ACTIVE
+        user.save(update_fields=["password", "status"])
+
+        invite.delete()
+        return user
+
+
+# =======================================================
+# TEAM MEMBER UPDATE (role/status)
+# =======================================================
 class TeamMemberUpdateSerializer(serializers.Serializer):
     role = serializers.ChoiceField(choices=User.Role.choices, required=False)
     status = serializers.ChoiceField(choices=User.Status.choices, required=False)
     first_name = serializers.CharField(required=False, allow_blank=True)
     last_name = serializers.CharField(required=False, allow_blank=True)
+    phone = serializers.CharField(required=False, allow_blank=True)
