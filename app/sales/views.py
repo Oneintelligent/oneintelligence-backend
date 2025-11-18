@@ -587,3 +587,82 @@ class ActivityViewSet(viewsets.ViewSet):
             return api_response(200, "success", {"message": "Activity deleted"})
         except Exception as exc:
             return self._handle_exception(exc, "ActivityViewSet.destroy")
+
+
+# ------------------------------------------------------------------
+# SALES DASHBOARD VIEWSET (AOI-STYLE)
+# ------------------------------------------------------------------
+@extend_schema_view(
+    list=extend_schema(exclude=False),
+)
+class DashboardViewSet(viewsets.ViewSet):
+    """
+    Sales Dashboard — aggregated analytics
+    """
+    permission_classes = [IsAuthenticated]
+
+    def _handle_exception(self, exc: Exception, where: str = ""):
+        logger.exception("%s: %s", where, str(exc))
+        return api_response(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status="failure",
+            data={},
+            error_code="SERVER_ERROR",
+            error_message=str(exc),
+        )
+
+    @extend_schema(tags=["Sales / Dashboard"], summary="Get sales dashboard analytics")
+    def list(self, request):
+        """
+        GET /sales/dashboard/
+        We use list() to match ViewSet design.
+        """
+        try:
+            user = request.user
+            company_id = user.company_id
+
+            # ---------------------------------------------------
+            # PIPELINE SUMMARY
+            # ---------------------------------------------------
+            pipeline_data = (
+                Opportunity.objects.filter(company_id=company_id)
+                .values("stage")
+                .annotate(
+                    count=models.Count("opp_id"),
+                    amount=models.Sum("amount")
+                )
+                .order_by("stage")
+            )
+
+            # ---------------------------------------------------
+            # LEAD STATUS SUMMARY
+            # ---------------------------------------------------
+            leads = Lead.objects.filter(company_id=company_id)
+            lead_stats = {
+                "new": leads.filter(status="new").count(),
+                "qualified": leads.filter(status="qualified").count(),
+                "converted": leads.filter(status="converted").count(),
+            }
+
+            # ---------------------------------------------------
+            # TOP OPPORTUNITIES
+            # ---------------------------------------------------
+            top_opps = (
+                Opportunity.objects.filter(company_id=company_id)
+                .order_by("-amount")[:5]
+                .values("title", "amount", "stage")
+            )
+
+            # ---------------------------------------------------
+            return api_response(
+                200,
+                "success",
+                {
+                    "pipeline": list(pipeline_data),
+                    "lead_stats": lead_stats,
+                    "top_opportunities": list(top_opps),
+                },
+            )
+
+        except Exception as exc:
+            return self._handle_exception(exc, "DashboardViewSet.list")
