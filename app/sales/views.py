@@ -5,12 +5,12 @@ from django.db import transaction
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from django.db.models import Q
+from django.db import models
 
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from django.db import models   # <-- ADD THIS
 
 from drf_spectacular.utils import extend_schema, extend_schema_view
 
@@ -25,7 +25,6 @@ from .permissions import (
 )
 from .ai_utils import get_recommendation
 
-from django.db import transaction
 from app.utils.response import api_response
 
 logger = logging.getLogger(__name__)
@@ -99,7 +98,8 @@ class AccountViewSet(viewsets.ViewSet):
         try:
             serializer = AccountSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
-            account = serializer.save(company_id=request.user.company_id, created_by=request.user)
+            # NOTE: Account model does not have `created_by` in your schema shown earlier.
+            account = serializer.save(company_id=request.user.company_id)
             return api_response(201, "success", AccountSerializer(account).data)
         except Exception as exc:
             return self._handle_exception(exc, "AccountViewSet.create")
@@ -478,75 +478,129 @@ class OpportunityViewSet(viewsets.ViewSet):
             return api_response(200, "success", OpportunitySerializer(instance).data)
         except Exception as exc:
             return self._handle_exception(exc, "OpportunityViewSet.partial_update")
-        
+
     # ---------------------------------------------------
     # Convert Opportunity → Account (Closed Won)
     # ---------------------------------------------------
     @extend_schema(
-    tags=["Sales / Opportunities"],
-    summary="Convert opportunity to an Account (Closed Won)"
+        tags=["Sales / Opportunities"],
+        summary="Convert opportunity to Account (Closed Won)"
     )
     @action(detail=True, methods=["post"], url_path="convert")
     @transaction.atomic
     def convert(self, request, pk=None):
+        """
+        When an opportunity is Closed Won → create an Account (if no true match).
+        """
         try:
             opp = get_object_or_404(Opportunity, opp_id=pk)
 
-            if opp.stage.lower() != "closed_won":
+            # Ensure proper status
+            if not opp.stage or opp.stage.lower() != "closed_won":
                 return api_response(
-                    400, "failure", {}, "NOT_WON",
+                    400,
+                    "failure",
+                    {},
+                    "NOT_WON",
                     "Opportunity must be Closed Won before converting."
                 )
 
-            # 1️⃣ Try linking to existing Account (domain or existing account)
-            existing = None
+            lead = opp.lead
+            company_id = opp.company_id
+
+            # 1️⃣ Existing account on the opportunity itself
             if opp.account:
-                existing = opp.account
-            elif opp.lead and opp.lead.email:
-                domain = opp.lead.email.split("@")[-1]
+                return api_response(
+                    200,
+                    "success",
+                    {
+                        "message": "Opportunity already linked to an account.",
+                        "account_id": str(opp.account.account_id),
+                        "name": opp.account.name,
+                    }
+                )
+
+            existing = None
+            domain = None
+
+            # 2️⃣ Exact match by email (best-case match)
+            if lead and lead.email:
                 existing = Account.objects.filter(
-                    company_id=opp.company_id,
-                    website__icontains=domain
+                    company_id=company_id,
+                    primary_email__iexact=lead.email.strip()
                 ).first()
 
+            # 3️⃣ Exact match by name
+            if not existing:
+                possible_name = None
+                if lead and getattr(lead, "organization", None):
+                    possible_name = lead.organization
+                elif opp.title:
+                    possible_name = opp.title
+                if possible_name:
+                    existing = Account.objects.filter(
+                        company_id=company_id,
+                        name__iexact=possible_name.strip()
+                    ).first()
+
+            # 4️⃣ Domain match — ONLY for business domains
+            if not existing and lead and lead.email:
+                domain = lead.email.split("@")[-1].lower()
+                FREE = {"gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "icloud.com"}
+                if domain not in FREE:
+                    existing = Account.objects.filter(
+                        company_id=company_id,
+                        website__icontains=domain
+                    ).first()
+
+            # If an account truly exists, re-link the opportunity
             if existing:
                 opp.account = existing
                 opp.save(update_fields=["account"])
-                return api_response(200, "success", {
-                    "message": "Linked to existing account.",
-                    "account_id": str(existing.account_id),
-                    "name": existing.name,
-                })
+                return api_response(
+                    200,
+                    "success",
+                    {
+                        "message": "Linked to existing account.",
+                        "account_id": str(existing.account_id),
+                        "name": existing.name,
+                    }
+                )
 
-            # 2️⃣ Create NEW Account
-            name = (
-                opp.account.name if opp.account else
-                getattr(opp.lead, "organization", None) or opp.title
-            )
+            # 5️⃣ CREATE NEW ACCOUNT (safe and clean)
+            new_name = None
+            if lead and getattr(lead, "organization", None):
+                new_name = lead.organization
+            else:
+                new_name = opp.title
 
-            account = Account.objects.create(
-                company_id=opp.company_id,
+            new_account = Account.objects.create(
+                company_id=company_id,
                 owner=opp.owner,
                 team=opp.team,
-                name=name,
-                website=opp.lead.email.split("@")[-1] if opp.lead and opp.lead.email else None,
-                primary_email=opp.lead.email if opp.lead else None,
-                primary_phone=opp.lead.phone if opp.lead else None,
+                name=new_name.strip() if new_name else "Unnamed Account",
+                website=(domain if domain else None),
+                primary_email=(lead.email if lead else None),
+                primary_phone=(lead.phone if lead else None),
                 visibility="team",
             )
 
-            opp.account = account
+            # Link created account
+            opp.account = new_account
             opp.save(update_fields=["account"])
 
-            return api_response(200, "success", {
-                "message": "Account created successfully.",
-                "account_id": str(account.account_id),
-                "name": account.name,
-            })
+            return api_response(
+                200,
+                "success",
+                {
+                    "message": "Account created successfully.",
+                    "account_id": str(new_account.account_id),
+                    "name": new_account.name,
+                }
+            )
 
         except Exception as exc:
             return self._handle_exception(exc, "OpportunityViewSet.convert")
-
 
     @extend_schema(tags=["Sales / Opportunities"], summary="Delete an opportunity")
     @transaction.atomic
@@ -737,75 +791,3 @@ class DashboardViewSet(viewsets.ViewSet):
 
         except Exception as exc:
             return self._handle_exception(exc, "DashboardViewSet.list")
-
-
-@extend_schema(
-    tags=["Sales / Opportunities"],
-    summary="Convert opportunity to an Account (Closed Won)"
-)
-@action(detail=True, methods=["post"], url_path="convert")
-@transaction.atomic
-def convert(self, request, pk=None):
-    """
-    When an opportunity is won → create an Account (if not exists).
-    """
-    try:
-        opp = get_object_or_404(Opportunity, opp_id=pk)
-
-        if opp.stage.lower() != "closed_won":
-            return api_response(
-                400,
-                "failure",
-                {},
-                "NOT_WON",
-                "Opportunity must be Closed Won before converting."
-            )
-
-        # 1️⃣ Prevent duplicate accounts using domain or name
-        existing = None
-        if opp.account:
-            existing = opp.account
-        elif opp.lead and opp.lead.email:
-            domain = opp.lead.email.split("@")[-1]
-            existing = Account.objects.filter(
-                company_id=opp.company_id,
-                website__icontains=domain
-            ).first()
-
-        if existing:
-            opp.account = existing
-            opp.save(update_fields=["account"])
-            return api_response(200, "success", {
-                "message": "Linked to existing account.",
-                "account_id": str(existing.account_id),
-                "name": existing.name
-            })
-
-        # 2️⃣ Create a new Account
-        name = opp.account.name if opp.account else (
-            opp.lead.organization if hasattr(opp.lead, "organization") else opp.title
-        )
-
-        account = Account.objects.create(
-            company_id=opp.company_id,
-            owner=opp.owner,
-            team=opp.team,
-            name=name,
-            website=opp.lead.email.split("@")[-1] if opp.lead and opp.lead.email else None,
-            primary_email=opp.lead.email if opp.lead else None,
-            primary_phone=opp.lead.phone if opp.lead else None,
-            visibility="team"
-        )
-
-        # Update opportunity
-        opp.account = account
-        opp.save(update_fields=["account"])
-
-        return api_response(200, "success", {
-            "message": "Account created successfully.",
-            "account_id": str(account.account_id),
-            "name": account.name
-        })
-
-    except Exception as exc:
-        return self._handle_exception(exc, "OpportunityViewSet.convert")
