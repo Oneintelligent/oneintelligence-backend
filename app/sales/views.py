@@ -1,0 +1,589 @@
+# app/sales/views.py
+import logging
+from django.conf import settings
+from django.db import transaction
+from django.utils import timezone
+from django.shortcuts import get_object_or_404
+from django.db.models import Q
+
+from rest_framework import viewsets, status
+from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
+from drf_spectacular.utils import extend_schema, extend_schema_view
+
+from .models import Account, Lead, Opportunity, Activity
+from .serializers import (
+    AccountSerializer, LeadSerializer, LeadCreateSerializer,
+    OpportunitySerializer, OpportunityCreateSerializer,
+    ActivitySerializer, ActivityCreateSerializer
+)
+from .permissions import (
+    IsSalesRecordVisible, can_view_sales_record, is_sales_role
+)
+from .ai_utils import get_recommendation
+
+from app.utils.response import api_response
+
+logger = logging.getLogger(__name__)
+
+
+# ------------------------------------------------------------------
+# Helper decorators for consistent schema hiding (similar to AOIViewSet)
+# ------------------------------------------------------------------
+@extend_schema_view(
+    list=extend_schema(exclude=False),
+    retrieve=extend_schema(exclude=False),
+    create=extend_schema(exclude=False),
+    update=extend_schema(exclude=False),
+    partial_update=extend_schema(exclude=False),
+    destroy=extend_schema(exclude=False),
+)
+class AccountViewSet(viewsets.ViewSet):
+    """
+    Accounts — standard AOI style ViewSet (list, retrieve, create, update, delete)
+    """
+    permission_classes = [IsAuthenticated]
+
+    def _handle_exception(self, exc: Exception, where: str = ""):
+        logger.exception("%s: %s", where, str(exc))
+        return api_response(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status="failure",
+            data={},
+            error_code="SERVER_ERROR",
+            error_message=str(exc),
+        )
+
+    @extend_schema(tags=["Sales / Accounts"], summary="List accounts (scoped to user)")
+    def list(self, request):
+        try:
+            user = request.user
+            qs = Account.objects.filter(company_id=user.company_id)
+
+            # default scoping: owner, shared, team, company(for sales roles)
+            conditions = Q(owner_id=user.userId) | Q(shared_with__contains=[str(user.userId)])
+            if getattr(user, "team_id", None):
+                conditions = conditions | Q(team_id=getattr(user, "team_id"))
+            if is_sales_role(user):
+                conditions = conditions | Q(visibility="company")
+            qs = qs.filter(conditions)
+
+            qtext = request.query_params.get("q")
+            if qtext:
+                qs = qs.filter(Q(name__icontains=qtext) | Q(primary_email__icontains=qtext))
+
+            serializer = AccountSerializer(qs.order_by("name"), many=True)
+            return api_response(200, "success", serializer.data)
+
+        except Exception as exc:
+            return self._handle_exception(exc, "AccountViewSet.list")
+
+    @extend_schema(tags=["Sales / Accounts"], summary="Retrieve an account")
+    def retrieve(self, request, pk=None):
+        try:
+            account = get_object_or_404(Account, account_id=pk)
+            if not can_view_sales_record(request.user, account):
+                return api_response(403, "failure", {}, "FORBIDDEN", "You don't have access to this account")
+            serializer = AccountSerializer(account)
+            return api_response(200, "success", serializer.data)
+        except Exception as exc:
+            return self._handle_exception(exc, "AccountViewSet.retrieve")
+
+    @extend_schema(tags=["Sales / Accounts"], summary="Create an account", request=AccountSerializer)
+    @transaction.atomic
+    def create(self, request):
+        try:
+            serializer = AccountSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            account = serializer.save(company_id=request.user.company_id, created_by=request.user)
+            return api_response(201, "success", AccountSerializer(account).data)
+        except Exception as exc:
+            return self._handle_exception(exc, "AccountViewSet.create")
+
+    @extend_schema(tags=["Sales / Accounts"], summary="Update an account", request=AccountSerializer)
+    @transaction.atomic
+    def update(self, request, pk=None):
+        try:
+            account = get_object_or_404(Account, account_id=pk)
+            if not can_view_sales_record(request.user, account):
+                return api_response(403, "failure", {}, "FORBIDDEN", "You don't have access to this account")
+            serializer = AccountSerializer(account, data=request.data)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return api_response(200, "success", serializer.data)
+        except Exception as exc:
+            return self._handle_exception(exc, "AccountViewSet.update")
+
+    @extend_schema(tags=["Sales / Accounts"], summary="Partially update an account", request=AccountSerializer)
+    @transaction.atomic
+    def partial_update(self, request, pk=None):
+        try:
+            account = get_object_or_404(Account, account_id=pk)
+            if not can_view_sales_record(request.user, account):
+                return api_response(403, "failure", {}, "FORBIDDEN", "You don't have access to this account")
+            serializer = AccountSerializer(account, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return api_response(200, "success", serializer.data)
+        except Exception as exc:
+            return self._handle_exception(exc, "AccountViewSet.partial_update")
+
+    @extend_schema(tags=["Sales / Accounts"], summary="Delete an account")
+    @transaction.atomic
+    def destroy(self, request, pk=None):
+        try:
+            account = get_object_or_404(Account, account_id=pk)
+            if not can_view_sales_record(request.user, account):
+                return api_response(403, "failure", {}, "FORBIDDEN", "You don't have access to this account")
+            account.delete()
+            return api_response(200, "success", {"message": "Account deleted"})
+        except Exception as exc:
+            return self._handle_exception(exc, "AccountViewSet.destroy")
+
+
+# ------------------------------------------------------------------
+@extend_schema_view(
+    list=extend_schema(exclude=False),
+    retrieve=extend_schema(exclude=False),
+    create=extend_schema(exclude=False),
+    update=extend_schema(exclude=False),
+    partial_update=extend_schema(exclude=False),
+    destroy=extend_schema(exclude=False),
+)
+class LeadViewSet(viewsets.ViewSet):
+    """
+    Leads — standardized AOI-style ViewSet
+    """
+    permission_classes = [IsAuthenticated, IsSalesRecordVisible]
+
+    def _handle_exception(self, exc: Exception, where: str = ""):
+        logger.exception("%s: %s", where, str(exc))
+        return api_response(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status="failure",
+            data={},
+            error_code="SERVER_ERROR",
+            error_message=str(exc),
+        )
+
+    @extend_schema(tags=["Sales / Leads"], summary="List leads (scoped to user)")
+    def list(self, request):
+        try:
+            user = request.user
+            qs = Lead.objects.filter(company_id=user.company_id)
+            conditions = Q(owner_id=user.userId) | Q(shared_with__contains=[str(user.userId)])
+            if getattr(user, "team_id", None):
+                conditions = conditions | Q(team_id=getattr(user, "team_id"))
+            if is_sales_role(user):
+                conditions = conditions | Q(visibility="company")
+            qs = qs.filter(conditions)
+
+            status_q = request.query_params.get("status")
+            qtext = request.query_params.get("q")
+            owner = request.query_params.get("owner")
+            if status_q:
+                qs = qs.filter(status=status_q)
+            if owner:
+                qs = qs.filter(owner_id=owner)
+            if qtext:
+                qs = qs.filter(
+                    Q(first_name__icontains=qtext) | Q(last_name__icontains=qtext) |
+                    Q(email__icontains=qtext) | Q(organization__icontains=qtext)
+                )
+
+            serializer = LeadSerializer(qs.order_by("-updated_at"), many=True)
+            return api_response(200, "success", serializer.data)
+        except Exception as exc:
+            return self._handle_exception(exc, "LeadViewSet.list")
+
+    @extend_schema(tags=["Sales / Leads"], summary="Retrieve a lead")
+    def retrieve(self, request, pk=None):
+        try:
+            lead = get_object_or_404(Lead, lead_id=pk)
+            if not can_view_sales_record(request.user, lead):
+                return api_response(403, "failure", {}, "FORBIDDEN", "You don't have access to this lead")
+            serializer = LeadSerializer(lead)
+            return api_response(200, "success", serializer.data)
+        except Exception as exc:
+            return self._handle_exception(exc, "LeadViewSet.retrieve")
+
+    @extend_schema(tags=["Sales / Leads"], summary="Create a lead", request=LeadCreateSerializer)
+    @transaction.atomic
+    def create(self, request):
+        try:
+            user = request.user
+            serializer = LeadCreateSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+
+            # enforce sensible defaults:
+            # if visibility=team but user has no team -> fallback to owner to avoid hidden leads
+            vis = serializer.validated_data.get("visibility")
+            if vis == "team" and not getattr(user, "team", None):
+                serializer.validated_data["visibility"] = "owner"
+
+            # prevent assign to non-sales (optional)
+            owner_obj = serializer.validated_data.get("owner", user)
+            # if owner provided and is a Guest, block (simple rule)
+            if owner_obj and getattr(owner_obj, "role", None) == "Guest":
+                return api_response(400, "failure", {}, "INVALID_OWNER", "Guest users cannot own leads")
+
+            lead = serializer.save(
+                company_id=user.company_id,
+                owner=owner_obj or user,
+                team=getattr(owner_obj, "team", getattr(user, "team", None))
+            )
+            return api_response(201, "success", LeadSerializer(lead).data)
+        except Exception as exc:
+            return self._handle_exception(exc, "LeadViewSet.create")
+
+    @extend_schema(tags=["Sales / Leads"], summary="Update a lead", request=LeadCreateSerializer)
+    @transaction.atomic
+    def update(self, request, pk=None):
+        try:
+            lead = get_object_or_404(Lead, lead_id=pk)
+            if not can_view_sales_record(request.user, lead):
+                return api_response(403, "failure", {}, "FORBIDDEN", "You don't have access to this lead")
+
+            serializer = LeadCreateSerializer(lead, data=request.data)
+            serializer.is_valid(raise_exception=True)
+            instance = serializer.save()
+
+            # if owner changed, sync team
+            new_owner = getattr(instance, "owner", None)
+            if new_owner and getattr(instance, "team", None) != getattr(new_owner, "team", None):
+                instance.team = getattr(new_owner, "team", None)
+                instance.save(update_fields=["team", "updated_at"])
+
+            return api_response(200, "success", LeadSerializer(instance).data)
+        except Exception as exc:
+            return self._handle_exception(exc, "LeadViewSet.update")
+
+    @extend_schema(tags=["Sales / Leads"], summary="Partially update a lead", request=LeadCreateSerializer)
+    @transaction.atomic
+    def partial_update(self, request, pk=None):
+        try:
+            lead = get_object_or_404(Lead, lead_id=pk)
+            if not can_view_sales_record(request.user, lead):
+                return api_response(403, "failure", {}, "FORBIDDEN", "You don't have access to this lead")
+
+            serializer = LeadCreateSerializer(lead, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            instance = serializer.save()
+
+            # sync team if owner changed
+            new_owner = getattr(instance, "owner", None)
+            if new_owner and getattr(instance, "team", None) != getattr(new_owner, "team", None):
+                instance.team = getattr(new_owner, "team", None)
+                instance.save(update_fields=["team", "updated_at"])
+
+            return api_response(200, "success", LeadSerializer(instance).data)
+        except Exception as exc:
+            return self._handle_exception(exc, "LeadViewSet.partial_update")
+
+    @extend_schema(tags=["Sales / Leads"], summary="Delete a lead")
+    @transaction.atomic
+    def destroy(self, request, pk=None):
+        try:
+            lead = get_object_or_404(Lead, lead_id=pk)
+            if not can_view_sales_record(request.user, lead):
+                return api_response(403, "failure", {}, "FORBIDDEN", "You don't have access to this lead")
+            lead.delete()
+            return api_response(200, "success", {"message": "Lead deleted"})
+        except Exception as exc:
+            return self._handle_exception(exc, "LeadViewSet.destroy")
+
+    # ---------------- AI ACTIONS ----------------
+    @extend_schema(tags=["Sales / Leads"], summary="On-demand AI lead score")
+    @action(detail=True, methods=["post"], url_path="score")
+    def score(self, request, pk=None):
+        try:
+            lead = get_object_or_404(Lead, lead_id=pk)
+            if not can_view_sales_record(request.user, lead):
+                return api_response(403, "failure", {}, "FORBIDDEN", "You don't have access to this lead")
+
+            recent_acts = Activity.objects.filter(
+                company_id=lead.company_id, entity_type="lead", entity_id=lead.lead_id
+            ).order_by("-occurred_at")[:3]
+
+            payload = {
+                "lead": {
+                    "lead_id": str(lead.lead_id),
+                    "first_name": lead.first_name,
+                    "last_name": lead.last_name,
+                    "email": lead.email,
+                    "phone": lead.phone,
+                    "status": lead.status,
+                    "metadata": lead.metadata,
+                },
+                "recent_activities": [
+                    {"kind": a.kind, "body": a.body, "occurred_at": a.occurred_at.isoformat()}
+                    for a in recent_acts
+                ],
+                "account": {
+                    "account_id": str(lead.account.account_id) if lead.account else None,
+                    "name": lead.account.name if lead.account else None,
+                },
+            }
+
+            result = get_recommendation(payload, kind="lead_score")
+            if not result:
+                return api_response(500, "failure", {}, "AI_ERROR", "AI failed to return result")
+
+            score = result.get("score")
+            reasons = result.get("reasons") or []
+            if score is not None:
+                lead.score = score
+                lead.ai_reasons = reasons
+                lead.save(update_fields=["score", "ai_reasons", "updated_at"])
+
+            return api_response(200, "success", result)
+
+        except Exception as exc:
+            return self._handle_exception(exc, "LeadViewSet.score")
+
+    @extend_schema(tags=["Sales / Leads"], summary="On-demand AI follow-up suggestion")
+    @action(detail=True, methods=["post"], url_path="followup")
+    def followup(self, request, pk=None):
+        try:
+            lead = get_object_or_404(Lead, lead_id=pk)
+            if not can_view_sales_record(request.user, lead):
+                return api_response(403, "failure", {}, "FORBIDDEN", "You don't have access to this lead")
+
+            payload = {"lead": {"lead_id": str(lead.lead_id), "email": lead.email, "first_name": lead.first_name, "last_name": lead.last_name, "metadata": lead.metadata}}
+            result = get_recommendation(payload, kind="followup")
+            if not result:
+                return api_response(500, "failure", {}, "AI_ERROR", "AI failed to return result")
+
+            return api_response(200, "success", result)
+        except Exception as exc:
+            return self._handle_exception(exc, "LeadViewSet.followup")
+
+
+# ------------------------------------------------------------------
+@extend_schema_view(
+    list=extend_schema(exclude=False),
+    retrieve=extend_schema(exclude=False),
+    create=extend_schema(exclude=False),
+    update=extend_schema(exclude=False),
+    partial_update=extend_schema(exclude=False),
+    destroy=extend_schema(exclude=False),
+)
+class OpportunityViewSet(viewsets.ViewSet):
+    """
+    Opportunities — AOI-style ViewSet
+    """
+    permission_classes = [IsAuthenticated, IsSalesRecordVisible]
+
+    def _handle_exception(self, exc: Exception, where: str = ""):
+        logger.exception("%s: %s", where, str(exc))
+        return api_response(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status="failure",
+            data={},
+            error_code="SERVER_ERROR",
+            error_message=str(exc),
+        )
+
+    @extend_schema(tags=["Sales / Opportunities"], summary="List opportunities (scoped)")
+    def list(self, request):
+        try:
+            user = request.user
+            qs = Opportunity.objects.filter(company_id=user.company_id)
+            conditions = Q(owner_id=user.userId) | Q(shared_with__contains=[str(user.userId)])
+            if getattr(user, "team_id", None):
+                conditions = conditions | Q(team_id=getattr(user, "team_id"))
+            if is_sales_role(user):
+                conditions = conditions | Q(visibility="company")
+            qs = qs.filter(conditions)
+
+            stage = request.query_params.get("stage")
+            if stage:
+                qs = qs.filter(stage=stage)
+
+            serializer = OpportunitySerializer(qs.order_by("-updated_at"), many=True)
+            return api_response(200, "success", serializer.data)
+        except Exception as exc:
+            return self._handle_exception(exc, "OpportunityViewSet.list")
+
+    @extend_schema(tags=["Sales / Opportunities"], summary="Retrieve an opportunity")
+    def retrieve(self, request, pk=None):
+        try:
+            opp = get_object_or_404(Opportunity, opp_id=pk)
+            if not can_view_sales_record(request.user, opp):
+                return api_response(403, "failure", {}, "FORBIDDEN", "You don't have access to this opportunity")
+            return api_response(200, "success", OpportunitySerializer(opp).data)
+        except Exception as exc:
+            return self._handle_exception(exc, "OpportunityViewSet.retrieve")
+
+    @extend_schema(tags=["Sales / Opportunities"], summary="Create an opportunity", request=OpportunityCreateSerializer)
+    @transaction.atomic
+    def create(self, request):
+        try:
+            user = request.user
+            serializer = OpportunityCreateSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+
+            owner_obj = serializer.validated_data.get("owner", user)
+            if owner_obj and getattr(owner_obj, "role", None) == "Guest":
+                return api_response(400, "failure", {}, "INVALID_OWNER", "Guest users cannot own opportunities")
+
+            opp = serializer.save(company_id=user.company_id, owner=owner_obj or user, team=getattr(owner_obj, "team", getattr(user, "team", None)))
+            return api_response(201, "success", OpportunitySerializer(opp).data)
+        except Exception as exc:
+            return self._handle_exception(exc, "OpportunityViewSet.create")
+
+    @extend_schema(tags=["Sales / Opportunities"], summary="Update an opportunity", request=OpportunityCreateSerializer)
+    @transaction.atomic
+    def update(self, request, pk=None):
+        try:
+            opp = get_object_or_404(Opportunity, opp_id=pk)
+            if not can_view_sales_record(request.user, opp):
+                return api_response(403, "failure", {}, "FORBIDDEN", "You don't have access to this opportunity")
+
+            serializer = OpportunityCreateSerializer(opp, data=request.data)
+            serializer.is_valid(raise_exception=True)
+            instance = serializer.save()
+
+            # sync team when owner changed
+            new_owner = getattr(instance, "owner", None)
+            if new_owner and getattr(instance, "team", None) != getattr(new_owner, "team", None):
+                instance.team = getattr(new_owner, "team", None)
+                instance.save(update_fields=["team", "updated_at"])
+
+            return api_response(200, "success", OpportunitySerializer(instance).data)
+        except Exception as exc:
+            return self._handle_exception(exc, "OpportunityViewSet.update")
+
+    @extend_schema(tags=["Sales / Opportunities"], summary="Partially update an opportunity", request=OpportunityCreateSerializer)
+    @transaction.atomic
+    def partial_update(self, request, pk=None):
+        try:
+            opp = get_object_or_404(Opportunity, opp_id=pk)
+            if not can_view_sales_record(request.user, opp):
+                return api_response(403, "failure", {}, "FORBIDDEN", "You don't have access to this opportunity")
+
+            serializer = OpportunityCreateSerializer(opp, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            instance = serializer.save()
+
+            new_owner = getattr(instance, "owner", None)
+            if new_owner and getattr(instance, "team", None) != getattr(new_owner, "team", None):
+                instance.team = getattr(new_owner, "team", None)
+                instance.save(update_fields=["team", "updated_at"])
+
+            return api_response(200, "success", OpportunitySerializer(instance).data)
+        except Exception as exc:
+            return self._handle_exception(exc, "OpportunityViewSet.partial_update")
+
+    @extend_schema(tags=["Sales / Opportunities"], summary="Delete an opportunity")
+    @transaction.atomic
+    def destroy(self, request, pk=None):
+        try:
+            opp = get_object_or_404(Opportunity, opp_id=pk)
+            if not can_view_sales_record(request.user, opp):
+                return api_response(403, "failure", {}, "FORBIDDEN", "You don't have access to this opportunity")
+            opp.delete()
+            return api_response(200, "success", {"message": "Opportunity deleted"})
+        except Exception as exc:
+            return self._handle_exception(exc, "OpportunityViewSet.destroy")
+
+
+# ------------------------------------------------------------------
+@extend_schema_view(
+    list=extend_schema(exclude=False),
+    retrieve=extend_schema(exclude=False),
+    create=extend_schema(exclude=False),
+    update=extend_schema(exclude=False),
+    partial_update=extend_schema(exclude=False),
+    destroy=extend_schema(exclude=False),
+)
+class ActivityViewSet(viewsets.ViewSet):
+    """
+    Activities — AOI-style ViewSet
+    """
+    permission_classes = [IsAuthenticated]
+
+    def _handle_exception(self, exc: Exception, where: str = ""):
+        logger.exception("%s: %s", where, str(exc))
+        return api_response(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status="failure",
+            data={},
+            error_code="SERVER_ERROR",
+            error_message=str(exc),
+        )
+
+    @extend_schema(tags=["Sales / Activities"], summary="List activities (for entity)")
+    def list(self, request):
+        try:
+            user = request.user
+            qs = Activity.objects.filter(company_id=user.company_id)
+            entity_type = request.query_params.get("entity_type")
+            entity_id = request.query_params.get("entity_id")
+            if entity_type and entity_id:
+                qs = qs.filter(entity_type=entity_type, entity_id=entity_id)
+            serializer = ActivitySerializer(qs.order_by("-occurred_at"), many=True)
+            return api_response(200, "success", serializer.data)
+        except Exception as exc:
+            return self._handle_exception(exc, "ActivityViewSet.list")
+
+    @extend_schema(tags=["Sales / Activities"], summary="Retrieve an activity")
+    def retrieve(self, request, pk=None):
+        try:
+            activity = get_object_or_404(Activity, activity_id=pk)
+            # activity visibility is tied to parent entity; we assume caller enforces via entity fetch
+            serializer = ActivitySerializer(activity)
+            return api_response(200, "success", serializer.data)
+        except Exception as exc:
+            return self._handle_exception(exc, "ActivityViewSet.retrieve")
+
+    @extend_schema(tags=["Sales / Activities"], summary="Create an activity", request=ActivityCreateSerializer)
+    @transaction.atomic
+    def create(self, request):
+        try:
+            user = request.user
+            serializer = ActivityCreateSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+
+            team = getattr(user, "team", None)
+            activity = serializer.save(company_id=user.company_id, actor=user, team=team)
+            return api_response(201, "success", ActivitySerializer(activity).data)
+        except Exception as exc:
+            return self._handle_exception(exc, "ActivityViewSet.create")
+
+    @extend_schema(tags=["Sales / Activities"], summary="Update an activity", request=ActivityCreateSerializer)
+    @transaction.atomic
+    def update(self, request, pk=None):
+        try:
+            activity = get_object_or_404(Activity, activity_id=pk)
+            # optional: validate caller has rights to update (actor or admin)
+            serializer = ActivityCreateSerializer(activity, data=request.data)
+            serializer.is_valid(raise_exception=True)
+            instance = serializer.save()
+            return api_response(200, "success", ActivitySerializer(instance).data)
+        except Exception as exc:
+            return self._handle_exception(exc, "ActivityViewSet.update")
+
+    @extend_schema(tags=["Sales / Activities"], summary="Partially update an activity", request=ActivityCreateSerializer)
+    @transaction.atomic
+    def partial_update(self, request, pk=None):
+        try:
+            activity = get_object_or_404(Activity, activity_id=pk)
+            serializer = ActivityCreateSerializer(activity, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            instance = serializer.save()
+            return api_response(200, "success", ActivitySerializer(instance).data)
+        except Exception as exc:
+            return self._handle_exception(exc, "ActivityViewSet.partial_update")
+
+    @extend_schema(tags=["Sales / Activities"], summary="Delete an activity")
+    @transaction.atomic
+    def destroy(self, request, pk=None):
+        try:
+            activity = get_object_or_404(Activity, activity_id=pk)
+            activity.delete()
+            return api_response(200, "success", {"message": "Activity deleted"})
+        except Exception as exc:
+            return self._handle_exception(exc, "ActivityViewSet.destroy")

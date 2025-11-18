@@ -76,6 +76,26 @@ class User(AbstractBaseUser, PermissionsMixin):
         db_column="companyId",
     )
 
+    # Team reference (for Sales, Support, Projects)
+    team = models.ForeignKey(
+    "teams.Team",
+    null=True,
+    blank=True,
+    on_delete=models.SET_NULL,
+    related_name="members",
+    db_column="teamId"
+    )
+
+    # Map .id to userId for DRF/django consistency
+    @property
+    def id(self):
+        return self.userId
+
+    @property
+    def full_name(self):
+        return f"{self.first_name} {self.last_name}".strip()
+
+
     # Profile fields
     first_name = models.CharField(max_length=100, blank=True, default="")
     last_name = models.CharField(max_length=100, blank=True, default="")

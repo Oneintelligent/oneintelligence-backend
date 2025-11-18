@@ -7,32 +7,49 @@ from pathlib import Path
 from datetime import timedelta
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-
+SALES_AI_MODEL = "gpt-4o-mini"  # set to desired model
+SALES_AI_CACHE_TTL = 60 * 60 * 12
 SECRET_KEY = 'django-insecure-placeholder-key'
 DEBUG = True
+
+# Django cache configured to Redis recommended:
+CACHES = {
+    "default": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/1"),
+        "OPTIONS": {"CLIENT_CLASS": "django_redis.client.DefaultClient"},
+    }
+}
+
 ALLOWED_HOSTS = ['192.168.1.9', '127.0.0.1', 'localhost:3000', 'localhost', '3.109.211.100', '13.235.73.171', '52.66.11.128']
 
 INSTALLED_APPS = [
+    # Django Core
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+
+    # Third-party
     'rest_framework',
     'drf_spectacular',
-    'app.onboarding.users',
-    'app.onboarding.companies',
-    'app.subscriptions',
-    'app.onboarding.invites',
-    'app.products',
-    'app.oneintelligentai',  # <--- THIS LINE IS CRUCIAL
     'corsheaders',
     'rest_framework_simplejwt',
-    'rest_framework_simplejwt.token_blacklist', 
+    'rest_framework_simplejwt.token_blacklist',
 
-
+    # Your Apps (IMPORTANT: Load dependencies first)
+    'app.onboarding.users',          # user model depends on company (FK)
+    'app.onboarding.companies',      # company model
+    'app.teams',                     # can reference company & users
+    'app.sales',                     # depends on teams + companies + users
+    'app.subscriptions',             # independent
+    'app.onboarding.invites',        # independent
+    'app.products',                  # independent
+    'app.oneintelligentai',          # independent (LLM tools)
 ]
+
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',  # Must be at top
