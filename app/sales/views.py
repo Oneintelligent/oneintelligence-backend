@@ -10,6 +10,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from django.db import models   # <-- ADD THIS
 
 from drf_spectacular.utils import extend_schema, extend_schema_view
 
