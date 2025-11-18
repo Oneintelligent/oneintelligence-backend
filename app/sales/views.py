@@ -25,7 +25,6 @@ from .permissions import (
 )
 from .ai_utils import get_recommendation
 
-from app.sales.models import Account
 from django.db import transaction
 from app.utils.response import api_response
 
@@ -484,8 +483,8 @@ class OpportunityViewSet(viewsets.ViewSet):
     # Convert Opportunity → Account (Closed Won)
     # ---------------------------------------------------
     @extend_schema(
-        tags=["Sales / Opportunities"],
-        summary="Convert a Closed Won opportunity into an Account"
+    tags=["Sales / Opportunities"],
+    summary="Convert opportunity to an Account (Closed Won)"
     )
     @action(detail=True, methods=["post"], url_path="convert")
     @transaction.atomic
@@ -493,24 +492,17 @@ class OpportunityViewSet(viewsets.ViewSet):
         try:
             opp = get_object_or_404(Opportunity, opp_id=pk)
 
-            # Must be closed_won
             if opp.stage.lower() != "closed_won":
                 return api_response(
                     400, "failure", {}, "NOT_WON",
                     "Opportunity must be Closed Won before converting."
                 )
 
-            # If account already linked
-            if opp.account:
-                return api_response(200, "success", {
-                    "message": "Opportunity already linked to an existing account.",
-                    "account_id": str(opp.account.account_id),
-                    "name": opp.account.name
-                })
-
-            # Try dedupe via domain
+            # 1️⃣ Try linking to existing Account (domain or existing account)
             existing = None
-            if opp.lead and opp.lead.email:
+            if opp.account:
+                existing = opp.account
+            elif opp.lead and opp.lead.email:
                 domain = opp.lead.email.split("@")[-1]
                 existing = Account.objects.filter(
                     company_id=opp.company_id,
@@ -523,33 +515,33 @@ class OpportunityViewSet(viewsets.ViewSet):
                 return api_response(200, "success", {
                     "message": "Linked to existing account.",
                     "account_id": str(existing.account_id),
-                    "name": existing.name
+                    "name": existing.name,
                 })
 
-            # -------------------------------
-            # Create NEW account
-            # -------------------------------
-            name = opp.title  # best fallback since lead.organization doesn't exist
+            # 2️⃣ Create NEW Account
+            name = (
+                opp.account.name if opp.account else
+                getattr(opp.lead, "organization", None) or opp.title
+            )
 
             account = Account.objects.create(
                 company_id=opp.company_id,
                 owner=opp.owner,
                 team=opp.team,
                 name=name,
-                website=domain if opp.lead and opp.lead.email else None,
+                website=opp.lead.email.split("@")[-1] if opp.lead and opp.lead.email else None,
                 primary_email=opp.lead.email if opp.lead else None,
                 primary_phone=opp.lead.phone if opp.lead else None,
                 visibility="team",
-                created_by=request.user,
             )
 
             opp.account = account
             opp.save(update_fields=["account"])
 
             return api_response(200, "success", {
-                "message": "New account created from opportunity.",
+                "message": "Account created successfully.",
                 "account_id": str(account.account_id),
-                "name": account.name
+                "name": account.name,
             })
 
         except Exception as exc:
@@ -802,8 +794,7 @@ def convert(self, request, pk=None):
             website=opp.lead.email.split("@")[-1] if opp.lead and opp.lead.email else None,
             primary_email=opp.lead.email if opp.lead else None,
             primary_phone=opp.lead.phone if opp.lead else None,
-            visibility="team",
-            created_by=request.user,
+            visibility="team"
         )
 
         # Update opportunity
