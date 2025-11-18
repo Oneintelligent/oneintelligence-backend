@@ -25,6 +25,8 @@ from .permissions import (
 )
 from .ai_utils import get_recommendation
 
+from app.sales.models import Account
+from django.db import transaction
 from app.utils.response import api_response
 
 logger = logging.getLogger(__name__)
@@ -477,6 +479,82 @@ class OpportunityViewSet(viewsets.ViewSet):
             return api_response(200, "success", OpportunitySerializer(instance).data)
         except Exception as exc:
             return self._handle_exception(exc, "OpportunityViewSet.partial_update")
+        
+    # ---------------------------------------------------
+    # Convert Opportunity → Account (Closed Won)
+    # ---------------------------------------------------
+    @extend_schema(
+        tags=["Sales / Opportunities"],
+        summary="Convert a Closed Won opportunity into an Account"
+    )
+    @action(detail=True, methods=["post"], url_path="convert")
+    @transaction.atomic
+    def convert(self, request, pk=None):
+        try:
+            opp = get_object_or_404(Opportunity, opp_id=pk)
+
+            # Must be closed_won
+            if opp.stage.lower() != "closed_won":
+                return api_response(
+                    400, "failure", {}, "NOT_WON",
+                    "Opportunity must be Closed Won before converting."
+                )
+
+            # If account already linked
+            if opp.account:
+                return api_response(200, "success", {
+                    "message": "Opportunity already linked to an existing account.",
+                    "account_id": str(opp.account.account_id),
+                    "name": opp.account.name
+                })
+
+            # Try dedupe via domain
+            existing = None
+            if opp.lead and opp.lead.email:
+                domain = opp.lead.email.split("@")[-1]
+                existing = Account.objects.filter(
+                    company_id=opp.company_id,
+                    website__icontains=domain
+                ).first()
+
+            if existing:
+                opp.account = existing
+                opp.save(update_fields=["account"])
+                return api_response(200, "success", {
+                    "message": "Linked to existing account.",
+                    "account_id": str(existing.account_id),
+                    "name": existing.name
+                })
+
+            # -------------------------------
+            # Create NEW account
+            # -------------------------------
+            name = opp.title  # best fallback since lead.organization doesn't exist
+
+            account = Account.objects.create(
+                company_id=opp.company_id,
+                owner=opp.owner,
+                team=opp.team,
+                name=name,
+                website=domain if opp.lead and opp.lead.email else None,
+                primary_email=opp.lead.email if opp.lead else None,
+                primary_phone=opp.lead.phone if opp.lead else None,
+                visibility="team",
+                created_by=request.user,
+            )
+
+            opp.account = account
+            opp.save(update_fields=["account"])
+
+            return api_response(200, "success", {
+                "message": "New account created from opportunity.",
+                "account_id": str(account.account_id),
+                "name": account.name
+            })
+
+        except Exception as exc:
+            return self._handle_exception(exc, "OpportunityViewSet.convert")
+
 
     @extend_schema(tags=["Sales / Opportunities"], summary="Delete an opportunity")
     @transaction.atomic
@@ -667,3 +745,76 @@ class DashboardViewSet(viewsets.ViewSet):
 
         except Exception as exc:
             return self._handle_exception(exc, "DashboardViewSet.list")
+
+
+@extend_schema(
+    tags=["Sales / Opportunities"],
+    summary="Convert opportunity to an Account (Closed Won)"
+)
+@action(detail=True, methods=["post"], url_path="convert")
+@transaction.atomic
+def convert(self, request, pk=None):
+    """
+    When an opportunity is won → create an Account (if not exists).
+    """
+    try:
+        opp = get_object_or_404(Opportunity, opp_id=pk)
+
+        if opp.stage.lower() != "closed_won":
+            return api_response(
+                400,
+                "failure",
+                {},
+                "NOT_WON",
+                "Opportunity must be Closed Won before converting."
+            )
+
+        # 1️⃣ Prevent duplicate accounts using domain or name
+        existing = None
+        if opp.account:
+            existing = opp.account
+        elif opp.lead and opp.lead.email:
+            domain = opp.lead.email.split("@")[-1]
+            existing = Account.objects.filter(
+                company_id=opp.company_id,
+                website__icontains=domain
+            ).first()
+
+        if existing:
+            opp.account = existing
+            opp.save(update_fields=["account"])
+            return api_response(200, "success", {
+                "message": "Linked to existing account.",
+                "account_id": str(existing.account_id),
+                "name": existing.name
+            })
+
+        # 2️⃣ Create a new Account
+        name = opp.account.name if opp.account else (
+            opp.lead.organization if hasattr(opp.lead, "organization") else opp.title
+        )
+
+        account = Account.objects.create(
+            company_id=opp.company_id,
+            owner=opp.owner,
+            team=opp.team,
+            name=name,
+            website=opp.lead.email.split("@")[-1] if opp.lead and opp.lead.email else None,
+            primary_email=opp.lead.email if opp.lead else None,
+            primary_phone=opp.lead.phone if opp.lead else None,
+            visibility="team",
+            created_by=request.user,
+        )
+
+        # Update opportunity
+        opp.account = account
+        opp.save(update_fields=["account"])
+
+        return api_response(200, "success", {
+            "message": "Account created successfully.",
+            "account_id": str(account.account_id),
+            "name": account.name
+        })
+
+    except Exception as exc:
+        return self._handle_exception(exc, "OpportunityViewSet.convert")
