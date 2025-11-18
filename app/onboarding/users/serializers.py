@@ -175,7 +175,7 @@ class AcceptInviteSerializer(serializers.Serializer):
     password = serializers.CharField(write_only=True)
 
     def validate(self, attrs):
-        token = attrs["token"]
+        token = str(attrs["token"]).strip()
         password = attrs["password"]
 
         invite = InviteToken.objects.filter(token=token).first()

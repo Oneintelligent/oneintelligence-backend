@@ -161,25 +161,25 @@ class InviteToken(models.Model):
         return f"InviteToken({getattr(self.user, 'email', str(self.user))})"
 
 
-class InviteToken(models.Model):
-    token = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.OneToOneField(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name="invite_token"
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-    expires_at = models.DateTimeField()
+# class InviteToken(models.Model):
+#     token = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+#     user = models.OneToOneField(
+#         settings.AUTH_USER_MODEL,
+#         on_delete=models.CASCADE,
+#         related_name="invite_token"
+#     )
+#     created_at = models.DateTimeField(auto_now_add=True)
+#     expires_at = models.DateTimeField()
 
-    @classmethod
-    def create_for_user(cls, user, days_valid=7):
-        return cls.objects.create(
-            user=user,
-            expires_at=timezone.now() + timedelta(days=days_valid),
-        )
+#     @classmethod
+#     def create_for_user(cls, user, days_valid=7):
+#         return cls.objects.create(
+#             user=user,
+#             expires_at=timezone.now() + timedelta(days=days_valid),
+#         )
 
-    def is_valid(self):
-        return timezone.now() <= self.expires_at
+#     def is_valid(self):
+#         return timezone.now() <= self.expires_at
 
-    def __str__(self):
-        return f"InviteToken({self.user.email})"
+#     def __str__(self):
+#         return f"InviteToken({self.user.email})"
