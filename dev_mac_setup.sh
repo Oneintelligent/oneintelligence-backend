@@ -132,8 +132,8 @@ mkdir -p "$STATIC_DIR"
 
 echo "⚙️ Running Django migrations..."
 echo "🧹 Skipping collectstatic for local development..."
-python manage.py makemigrations
-python manage.py migrate
+# c
+# python manage.py migrate
 echo "✅ Django migrations complete."
 
 # --- Step 10: Run development server ---

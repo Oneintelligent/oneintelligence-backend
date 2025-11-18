@@ -41,7 +41,7 @@ class AOIViewSet(viewsets.ViewSet):
     """
 
     def get_permissions(self):
-        open_actions = ["signup", "signin", "token_refresh"]
+        open_actions = ["signup", "signin", "token_refresh","accept_invite"]
         if getattr(self, "action", None) in open_actions:
             return [permissions.AllowAny()]
         return [permissions.IsAuthenticated()]
@@ -237,9 +237,13 @@ class AOIViewSet(viewsets.ViewSet):
     # -------------------------------------------------------
     # Invite User
     # -------------------------------------------------------
-    @extend_schema(tags=["Users"], summary="Invite a new or existing user")
+    @extend_schema(
+        tags=["Users"],
+        summary="Invite a new or existing user",
+        request=InviteUserSerializer,
+    )
     @action(detail=False, methods=["post"], url_path="invite")
-    @transaction.atomic
+    @transaction.atomic                 
     def invite(self, request):
         try:
             serializer = InviteUserSerializer(data=request.data)
@@ -312,7 +316,11 @@ class AOIViewSet(viewsets.ViewSet):
     # -------------------------------------------------------
     # Accept Invite
     # -------------------------------------------------------
-    @extend_schema(tags=["Users"], summary="Accept invite and set password")
+    @extend_schema(
+        tags=["Users"],
+        summary="Accept invite and set password",
+        request=AcceptInviteSerializer,
+    )
     @action(detail=False, methods=["post"], url_path="accept-invite")
     @transaction.atomic
     def accept_invite(self, request):

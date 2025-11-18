@@ -160,3 +160,24 @@ SPECTACULAR_SETTINGS = {
         {"bearerAuth": []}
     ],
 }
+
+FRONTEND_BASE = "http://localhost:3000"
+
+EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'noreply@example.com')
+# =====================
+# EMAIL SETTINGS (GMAIL)
+# =====================
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'smtp.gmail.com'
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER')
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD')
+EMAIL_HOST_USER = 'vigneshkumarkv6@gmail.com'
+EMAIL_HOST_PASSWORD = 'rbco hnzp vfrr nysm'
+DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
+# Twilio (optional - for SMS)
+TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
+TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN', '39ddbd43072e765925a167fa05ca0391')
+TWILIO_FROM_NUMBER = os.getenv('TWILIO_FROM_NUMBER', '+919843376427')

@@ -80,9 +80,9 @@ fi
 # -----------------------------
 # STEP 4 — Run migrations
 # -----------------------------
-echo "🧩 Running makemigrations and migrate..."
-python manage.py makemigrations || { echo "❌ makemigrations failed!"; exit 1; }
-python manage.py migrate || { echo "❌ migrate failed!"; exit 1; }
+# echo "🧩 Running makemigrations and migrate..."
+# python manage.py makemigrations || { echo "❌ makemigrations failed!"; exit 1; }
+# python manage.py migrate || { echo "❌ migrate failed!"; exit 1; }
 
 # -----------------------------
 # STEP 5 — Run server
