@@ -52,20 +52,6 @@ THIRD_PARTY_APPS = [
     'corsheaders',
     'rest_framework_simplejwt',
     'rest_framework_simplejwt.token_blacklist',
-<<<<<<< HEAD
-=======
-    'drf_yasg',
-
-    # Your Apps (IMPORTANT: Load dependencies first)
-    'app.onboarding.users',          # user model depends on company (FK)
-    'app.onboarding.companies',      # company model
-    'app.teams',                     # can reference company & users
-    'app.sales',                     # depends on teams + companies + users
-    'app.subscriptions',             # independent
-    'app.onboarding.invites',        # independent
-    'app.products',                  # independent
-    'app.oneintelligentai',          # independent (LLM tools)
->>>>>>> a43198812936b9e3278375e88f5697208de125b8
 ]
 
 PLATFORM_APPS = [
