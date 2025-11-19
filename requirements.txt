@@ -26,3 +26,8 @@ requests>=2.31
 djangorestframework-simplejwt
 
 django-redis>=5.3.0
+
+#Send Email
+python-dotenv==1.0.1
+twilio==9.2.3
+drf-yasg==1.21.7
