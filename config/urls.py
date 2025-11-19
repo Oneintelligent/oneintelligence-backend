@@ -12,8 +12,8 @@ from rest_framework.routers import DefaultRouter
 # ================================
 # ViewSets
 # ================================
-from app.onboarding.users.views import AOIViewSet as UserViewSet
-from app.onboarding.companies.views import CompanyAOIViewSet
+from app.platform.accounts.views import UserViewSet
+from app.platform.companies.views import CompanyAOIViewSet
 
 # ================================
 # ROUTER INITIALIZATION
@@ -43,28 +43,26 @@ urlpatterns = [
     path("api/v1/", include(router.urls)),
 
     # -------------------------
-    # Teams Module
-    # /api/v1/teams/
     # -------------------------
-    path("api/v1/", include("app.teams.urls")),
+    # Platform services
+    # -------------------------
+    path("api/v1/", include("app.platform.teams.urls")),
+    path("api/v1/", include("app.platform.modules.urls")),
+    path("api/v1/", include("app.platform.licensing.urls")),
+    path("api/v1/", include("app.platform.flac.urls")),
+    path("api/v1/", include("app.platform.onboarding.urls")),
+    path("api/v1/subscriptions/", include("app.platform.subscriptions.urls")),
 
     # -------------------------
-    # Sales Module
-    # /api/v1/sales/
+    # Workspace modules
     # -------------------------
-    path("api/v1/", include("app.sales.urls")),
-
-    # -------------------------
-    # Subscriptions
-    # /api/v1/subscriptions/
-    # -------------------------
-    path("api/v1/subscriptions/", include("app.subscriptions.urls")),
+    path("api/v1/", include("app.workspace.sales.urls")),
 
     # -------------------------
     # OneIntelligent AI endpoints
     # /api/oneintelligentai/
     # -------------------------
-    path("api/oneintelligentai/", include("app.oneintelligentai.urls")),
+    path("api/oneintelligentai/", include("app.ai.oneintelligentai.urls")),
 
     # -------------------------
     # OpenAPI / Swagger / Redoc

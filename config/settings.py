@@ -21,34 +21,66 @@ CACHES = {
     }
 }
 
-ALLOWED_HOSTS = ['192.168.1.9', '127.0.0.1', 'localhost:3000', 'localhost', '3.109.211.100', '13.235.73.171', '52.66.11.128']
+ALLOWED_HOSTS = [
+    '192.168.1.9',
+    '127.0.0.1',
+    'localhost:3000',
+    'localhost',
+    '3.109.211.100',
+    '13.235.73.171',
+    '52.66.11.128',
+]
 
-INSTALLED_APPS = [
-    # Django Core
+# ─────────────────────────────────────────
+# App registry (mirrors architecture layers)
+# ─────────────────────────────────────────
+DJANGO_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+]
 
-    # Third-party
+THIRD_PARTY_APPS = [
     'rest_framework',
     'drf_spectacular',
     'corsheaders',
     'rest_framework_simplejwt',
     'rest_framework_simplejwt.token_blacklist',
-
-    # Your Apps (IMPORTANT: Load dependencies first)
-    'app.onboarding.users',          # user model depends on company (FK)
-    'app.onboarding.companies',      # company model
-    'app.teams',                     # can reference company & users
-    'app.sales',                     # depends on teams + companies + users
-    'app.subscriptions',             # independent
-    'app.onboarding.invites',        # independent
-    'app.products',                  # independent
-    'app.oneintelligentai',          # independent (LLM tools)
 ]
+
+PLATFORM_APPS = [
+    'app.core',                      # shared base models + audit/attachments
+    'app.platform.accounts',         # auth & user management
+    'app.platform.companies',        # org + workspace provisioning
+    'app.platform.invites',          # invite tokens + onboarding
+    'app.platform.licensing',        # seat buckets + enforcement
+    'app.platform.modules',          # module registry & company enablement
+    'app.platform.flac',             # field-level access control
+    'app.platform.subscriptions',    # plans, licensing, billing
+    'app.platform.teams',            # org structure (teams/departments)
+    'app.platform.onboarding',       # onboarding flow management
+]
+
+WORKSPACE_APPS = [
+    'app.workspace.sales',           # CRM / pipeline
+    # TODO: add projects, tasks, support, marketing modules as they are created
+]
+
+AI_APPS = [
+    'app.ai.oneintelligentai',          # AI services / chat endpoints
+    # TODO: add ai.recommendations, ai.insights, etc.
+]
+
+INSTALLED_APPS = (
+    DJANGO_APPS
+    + THIRD_PARTY_APPS
+    + PLATFORM_APPS
+    + WORKSPACE_APPS
+    + AI_APPS
+)
 
 
 MIDDLEWARE = [
@@ -127,6 +159,7 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
     ),
+    'EXCEPTION_HANDLER': 'app.utils.exception_handler.custom_exception_handler',
 }
 
 
@@ -139,9 +172,9 @@ SIMPLE_JWT = {
     "USER_ID_CLAIM": "userId",
 
     "AUTH_COOKIE": "oi_refresh_token",   # cookie name
-    "AUTH_COOKIE_SECURE": True,          # HTTPS only (turn off for local dev)
+    "AUTH_COOKIE_SECURE": not DEBUG,     # HTTPS only in production (False for local dev)
     "AUTH_COOKIE_HTTP_ONLY": True,       # prevent JS access
-    "AUTH_COOKIE_SAMESITE": "None",      # needed for cross-domain FE
+    "AUTH_COOKIE_SAMESITE": "Lax" if DEBUG else "None",  # Lax for local, None for cross-domain
     "AUTH_COOKIE_PATH": "/",             # cookie scope
 }
 
