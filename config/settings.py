@@ -69,7 +69,10 @@ PLATFORM_APPS = [
 
 WORKSPACE_APPS = [
     'app.workspace.sales',           # CRM / pipeline
-    # TODO: add projects, tasks, support, marketing modules as they are created
+    'app.workspace.projects',        # Project management
+    'app.workspace.tasks',           # Task management
+    'app.workspace.support',         # Support & Tickets
+    # TODO: add marketing modules as they are created
 ]
 
 AI_APPS = [

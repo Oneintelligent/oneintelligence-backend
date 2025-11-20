@@ -57,6 +57,10 @@ urlpatterns = [
     # Workspace modules
     # -------------------------
     path("api/v1/", include("app.workspace.sales.urls")),
+    path("api/v1/", include("app.workspace.projects.urls")),
+    path("api/v1/", include("app.workspace.tasks.urls")),
+    path("api/v1/", include("app.workspace.support.urls")),
+    path("api/v1/", include("app.workspace.dashboard.urls")),
 
     # -------------------------
     # OneIntelligent AI endpoints
