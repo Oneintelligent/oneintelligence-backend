@@ -14,6 +14,7 @@ django-cors-headers>=4.4
 
 # OpenAI integration
 openai>=1.0.0
+tiktoken>=0.5.0  # For accurate token counting (optional - falls back to estimation if not available)
 
 # Async file handling (for streaming uploads)
 aiofiles>=23.1.0

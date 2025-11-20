@@ -102,9 +102,9 @@ MIDDLEWARE = [
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",  # Next.js frontend
+    "http://127.0.0.1:3000",  # Alternative localhost
     "http://192.168.1.9:3000",
     "http://13.235.73.171",
-    "http://192.168.1.9:3000",
     "http://52.66.11.128"
 ]
 
@@ -112,6 +112,19 @@ CORS_ALLOWED_ORIGINS = [
 CORS_ALLOW_CREDENTIALS = True
 
 CORS_ALLOW_ALL_ORIGINS = False
+
+# Additional CORS settings for streaming
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
 
 
 ROOT_URLCONF = 'config.urls'
