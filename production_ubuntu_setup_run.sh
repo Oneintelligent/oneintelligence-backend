@@ -80,23 +80,27 @@ echo "✅ Python dependencies installed."
 # --- Step 6: Setup Environment Variables (.env file) ---
 ENV_FILE="$PROJECT_DIR/.env"
 if [ ! -f "$ENV_FILE" ]; then
-    echo "🔐 Creating .env file with SECRET_KEY..."
+    echo "🔐 Creating .env file with required environment variables..."
     # Generate SECRET_KEY
     SECRET_KEY=$(openssl rand -hex 32)
     cat > "$ENV_FILE" <<EOF
 SECRET_KEY=$SECRET_KEY
 DEBUG=False
+DB_NAME=$DB_NAME
+DB_USER=$DB_USER
+DB_PASSWORD=$DB_PASS
+DB_HOST=localhost
+DB_PORT=5432
 EOF
     chmod 600 "$ENV_FILE"
     chown ubuntu:ubuntu "$ENV_FILE"
-    echo "✅ .env file created with SECRET_KEY"
+    echo "✅ .env file created with all required variables"
 else
     # Ensure SECRET_KEY exists
     if ! grep -q "^SECRET_KEY=" "$ENV_FILE" 2>/dev/null; then
         echo "🔐 Adding SECRET_KEY to existing .env file..."
         SECRET_KEY=$(openssl rand -hex 32)
         echo "SECRET_KEY=$SECRET_KEY" >> "$ENV_FILE"
-        chmod 600 "$ENV_FILE"
         echo "✅ SECRET_KEY added to .env file"
     else
         echo "✅ SECRET_KEY already exists in .env file"
@@ -105,6 +109,28 @@ else
     if ! grep -q "^DEBUG=" "$ENV_FILE" 2>/dev/null; then
         echo "DEBUG=False" >> "$ENV_FILE"
     fi
+    # Ensure DB variables are set
+    if ! grep -q "^DB_NAME=" "$ENV_FILE" 2>/dev/null; then
+        echo "DB_NAME=$DB_NAME" >> "$ENV_FILE"
+    fi
+    if ! grep -q "^DB_USER=" "$ENV_FILE" 2>/dev/null; then
+        echo "DB_USER=$DB_USER" >> "$ENV_FILE"
+    fi
+    if ! grep -q "^DB_PASSWORD=" "$ENV_FILE" 2>/dev/null; then
+        echo "DB_PASSWORD=$DB_PASS" >> "$ENV_FILE"
+        echo "✅ DB_PASSWORD added to .env file"
+    else
+        echo "✅ DB_PASSWORD already exists in .env file"
+    fi
+    if ! grep -q "^DB_HOST=" "$ENV_FILE" 2>/dev/null; then
+        echo "DB_HOST=localhost" >> "$ENV_FILE"
+    fi
+    if ! grep -q "^DB_PORT=" "$ENV_FILE" 2>/dev/null; then
+        echo "DB_PORT=5432" >> "$ENV_FILE"
+    fi
+    # Update permissions
+    chmod 600 "$ENV_FILE"
+    chown ubuntu:ubuntu "$ENV_FILE"
 fi
 
 # --- Step 7: Migrations & Static Files ---

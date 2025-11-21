@@ -42,6 +42,25 @@ if ! grep -q "^DEBUG=" "$ENV_FILE" 2>/dev/null; then
     echo "DEBUG=False" >> "$ENV_FILE"
 fi
 
+# Ensure database variables are set (use defaults from deployment script)
+if ! grep -q "^DB_NAME=" "$ENV_FILE" 2>/dev/null; then
+    echo "DB_NAME=oneintelligence-db" >> "$ENV_FILE"
+fi
+if ! grep -q "^DB_USER=" "$ENV_FILE" 2>/dev/null; then
+    echo "DB_USER=oneintelligence" >> "$ENV_FILE"
+fi
+if ! grep -q "^DB_PASSWORD=" "$ENV_FILE" 2>/dev/null; then
+    echo "⚠️  DB_PASSWORD not found. Please set it manually:"
+    echo "   echo 'DB_PASSWORD=Onei@123' >> $ENV_FILE"
+    echo "   (Or use your actual database password)"
+fi
+if ! grep -q "^DB_HOST=" "$ENV_FILE" 2>/dev/null; then
+    echo "DB_HOST=localhost" >> "$ENV_FILE"
+fi
+if ! grep -q "^DB_PORT=" "$ENV_FILE" 2>/dev/null; then
+    echo "DB_PORT=5432" >> "$ENV_FILE"
+fi
+
 # Set secure permissions
 chmod 600 "$ENV_FILE"
 chown ubuntu:ubuntu "$ENV_FILE"
