@@ -91,6 +91,8 @@ DB_USER=$DB_USER
 DB_PASSWORD=$DB_PASS
 DB_HOST=localhost
 DB_PORT=5432
+OPENAI_API_KEY=sk-placeholder-not-configured
+REDIS_URL=redis://127.0.0.1:6379/1
 EOF
     chmod 600 "$ENV_FILE"
     chown ubuntu:ubuntu "$ENV_FILE"
@@ -127,6 +129,17 @@ else
     fi
     if ! grep -q "^DB_PORT=" "$ENV_FILE" 2>/dev/null; then
         echo "DB_PORT=5432" >> "$ENV_FILE"
+    fi
+    # Ensure OPENAI_API_KEY exists (required for AI features)
+    if ! grep -q "^OPENAI_API_KEY=" "$ENV_FILE" 2>/dev/null; then
+        echo "OPENAI_API_KEY=sk-placeholder-not-configured" >> "$ENV_FILE"
+        echo "⚠️  OPENAI_API_KEY set to placeholder. Please update with your actual API key."
+    else
+        echo "✅ OPENAI_API_KEY already exists in .env file"
+    fi
+    # Ensure REDIS_URL exists
+    if ! grep -q "^REDIS_URL=" "$ENV_FILE" 2>/dev/null; then
+        echo "REDIS_URL=redis://127.0.0.1:6379/1" >> "$ENV_FILE"
     fi
     # Update permissions
     chmod 600 "$ENV_FILE"

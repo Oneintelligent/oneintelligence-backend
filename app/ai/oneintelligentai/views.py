@@ -55,8 +55,16 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
 )
 
-# OpenAI client
-client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# OpenAI client (initialize with placeholder to avoid import errors)
+# The actual API calls will check for valid key and return appropriate errors
+openai_api_key = os.getenv("OPENAI_API_KEY", "sk-placeholder-not-configured")
+try:
+    client = AsyncOpenAI(api_key=openai_api_key)
+    if openai_api_key in ["sk-placeholder-not-configured", "your-openai-api-key-here", ""]:
+        logger.warning("OPENAI_API_KEY not properly configured. AI features will return errors until API key is set.")
+except Exception as e:
+    logger.error(f"Failed to initialize OpenAI client: {e}")
+    client = None
 
 # Model configuration
 DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
@@ -206,6 +214,13 @@ async def stream_openai_response_sse(
     Optimized for performance and error handling.
     """
     try:
+        # Check if OpenAI API key is properly configured
+        openai_api_key = os.getenv("OPENAI_API_KEY", "")
+        if not openai_api_key or openai_api_key in ["sk-placeholder-not-configured", "your-openai-api-key-here", ""]:
+            raise ValueError("OPENAI_API_KEY not configured. Please set OPENAI_API_KEY environment variable.")
+        if client is None:
+            raise ValueError("OpenAI client not initialized. Please check OPENAI_API_KEY configuration.")
+        
         logger.info(f"[AI Stream] Starting stream with model: {model_name}")
         
         stream = await client.chat.completions.create(
@@ -288,6 +303,13 @@ async def stream_openai_response_enhanced(
     finish_reason = "stop"
     
     try:
+        # Check if OpenAI API key is properly configured
+        openai_api_key = os.getenv("OPENAI_API_KEY", "")
+        if not openai_api_key or openai_api_key in ["sk-placeholder-not-configured", "your-openai-api-key-here", ""]:
+            raise ValueError("OPENAI_API_KEY not configured. Please set OPENAI_API_KEY environment variable.")
+        if client is None:
+            raise ValueError("OpenAI client not initialized. Please check OPENAI_API_KEY configuration.")
+        
         logger.info(f"[AI Stream] Starting enhanced stream with model: {model_name}")
         
         stream = await client.chat.completions.create(
@@ -403,6 +425,13 @@ async def get_openai_response_async(
     Used for audio and image processing.
     """
     try:
+        # Check if OpenAI API key is properly configured
+        openai_api_key = os.getenv("OPENAI_API_KEY", "")
+        if not openai_api_key or openai_api_key in ["sk-placeholder-not-configured", "your-openai-api-key-here", ""]:
+            raise ValueError("OPENAI_API_KEY not configured. Please set OPENAI_API_KEY environment variable.")
+        if client is None:
+            raise ValueError("OpenAI client not initialized. Please check OPENAI_API_KEY configuration.")
+        
         completion = await client.chat.completions.create(
             model=model_name,
             messages=conversation,
@@ -763,6 +792,13 @@ def audio_chat_api(request):
                 raise Exception(f"FFmpeg error: {stderr.decode()}")
             
             logger.info(f"[/api/ai/audio-chat] Converted to WAV: {temp_out_path}")
+
+            # Check if OpenAI API key is properly configured
+            openai_api_key = os.getenv("OPENAI_API_KEY", "")
+            if not openai_api_key or openai_api_key in ["sk-placeholder-not-configured", "your-openai-api-key-here", ""]:
+                raise ValueError("OPENAI_API_KEY not configured. Please set OPENAI_API_KEY environment variable.")
+            if client is None:
+                raise ValueError("OpenAI client not initialized. Please check OPENAI_API_KEY configuration.")
 
             # Transcribe audio
             with open(temp_out_path, "rb") as audio_file:
