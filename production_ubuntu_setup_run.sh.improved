@@ -12,6 +12,7 @@ set -euo pipefail
 # Notes:
 #  - Run as ubuntu user (script uses sudo internally)
 #  - Ensure AWS Security Group allows inbound 80 and 22
+#  - Database password will be auto-generated if not exists
 # ---------------------------------------------
 
 PROJECT_NAME="oneintelligence-backend"
@@ -19,7 +20,6 @@ PROJECT_DIR="/home/ubuntu/${PROJECT_NAME}"
 REPO_URL="https://github.com/Oneintelligent/oneintelligence-backend.git"
 DB_NAME="oneintelligence-db"
 DB_USER="oneintelligence"
-DB_PASS="Onei@123"   # Change this to a strong password for production
 DJANGO_SETTINGS_MODULE="config.settings"
 STATIC_DIR="${PROJECT_DIR}/static"
 GUNICORN_SERVICE="/etc/systemd/system/gunicorn.service"
@@ -41,12 +41,23 @@ echo "🗄️  Ensuring PostgreSQL & Redis are running..."
 sudo systemctl enable --now postgresql
 sudo systemctl enable --now redis-server
 
+# Get or generate database password
+if [ -f "${ENV_FILE}" ] && grep -q "^DB_PASSWORD=" "${ENV_FILE}"; then
+    DB_PASS=$(grep "^DB_PASSWORD=" "${ENV_FILE}" | cut -d'=' -f2-)
+    echo "✅ Using existing DB password from .env"
+else
+    DB_PASS=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-25)
+    echo "🔐 Generated new secure DB password"
+fi
+
 # Create DB user if missing
 if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'" | grep -q 1; then
     echo "🔐 Creating PostgreSQL user ${DB_USER}..."
     sudo -u postgres psql -c "CREATE USER ${DB_USER} WITH PASSWORD '${DB_PASS}';"
 else
     echo "✅ PostgreSQL user ${DB_USER} already exists."
+    # Update password if it changed
+    sudo -u postgres psql -c "ALTER USER ${DB_USER} WITH PASSWORD '${DB_PASS}';" 2>/dev/null || true
 fi
 
 # Create DB if missing
@@ -69,9 +80,25 @@ else
         echo "⚠️  Uncommitted changes detected — stashing..."
         git stash push -m "Auto-stash before deploy $(date -u +%Y%m%d_%H%M%S)" || true
     fi
-    git fetch origin || true
-    git checkout main || true
-    git pull --ff-only origin main || true
+    
+    # Improved Git error handling
+    if ! git fetch origin; then
+        echo "❌ Failed to fetch from origin. Check network and repository access."
+        exit 1
+    fi
+    
+    if ! git checkout main; then
+        echo "❌ Failed to checkout main branch."
+        exit 1
+    fi
+    
+    if ! git pull --ff-only origin main; then
+        echo "⚠️  Fast-forward pull failed. Attempting merge..."
+        if ! git pull origin main; then
+            echo "❌ Failed to pull latest changes."
+            exit 1
+        fi
+    fi
 fi
 cd "${PROJECT_DIR}"
 
@@ -97,8 +124,16 @@ fi
 
 # --- Step 6: Setup Environment Variables (.env file) ---
 echo "🔐 Ensuring .env file exists and has required entries..."
+PUBLIC_IP=$(curl -s http://checkip.amazonaws.com || echo "")
+
 if [ ! -f "${ENV_FILE}" ]; then
     SECRET_KEY=$(openssl rand -hex 32)
+    # Build ALLOWED_HOSTS with public IP if available
+    ALLOWED_HOSTS_LIST="localhost,127.0.0.1"
+    if [ -n "${PUBLIC_IP}" ] && [ "${PUBLIC_IP}" != "0.0.0.0" ]; then
+        ALLOWED_HOSTS_LIST="${ALLOWED_HOSTS_LIST},${PUBLIC_IP}"
+    fi
+    
     cat > "${ENV_FILE}" <<EOF
 # OneIntelligence environment variables - auto-generated
 SECRET_KEY=${SECRET_KEY}
@@ -109,7 +144,7 @@ DB_PASSWORD=${DB_PASS}
 DB_HOST=localhost
 DB_PORT=5432
 # ALLOWED_HOSTS should be a comma-separated list of hostnames/IPs without ports
-ALLOWED_HOSTS=localhost,127.0.0.1
+ALLOWED_HOSTS=${ALLOWED_HOSTS_LIST}
 OPENAI_API_KEY=sk-placeholder-not-configured
 REDIS_URL=redis://127.0.0.1:6379/1
 EOF
@@ -127,6 +162,23 @@ else
     grep -q "^DB_PORT=" "${ENV_FILE}" || echo "DB_PORT=5432" >> "${ENV_FILE}"
     grep -q "^REDIS_URL=" "${ENV_FILE}" || echo "REDIS_URL=redis://127.0.0.1:6379/1" >> "${ENV_FILE}"
     grep -q "^OPENAI_API_KEY=" "${ENV_FILE}" || echo "OPENAI_API_KEY=sk-placeholder-not-configured" >> "${ENV_FILE}"
+    
+    # Auto-update ALLOWED_HOSTS with public IP if not present
+    if [ -n "${PUBLIC_IP}" ] && [ "${PUBLIC_IP}" != "0.0.0.0" ]; then
+        if grep -q "^ALLOWED_HOSTS=" "${ENV_FILE}"; then
+            CURRENT_HOSTS=$(grep "^ALLOWED_HOSTS=" "${ENV_FILE}" | cut -d'=' -f2-)
+            if [[ ! "$CURRENT_HOSTS" =~ "$PUBLIC_IP" ]]; then
+                sudo sed -i "s/^ALLOWED_HOSTS=.*/ALLOWED_HOSTS=${CURRENT_HOSTS},${PUBLIC_IP}/" "${ENV_FILE}"
+                echo "✅ Added ${PUBLIC_IP} to ALLOWED_HOSTS"
+            fi
+        else
+            echo "ALLOWED_HOSTS=localhost,127.0.0.1,${PUBLIC_IP}" >> "${ENV_FILE}"
+            echo "✅ Created ALLOWED_HOSTS with ${PUBLIC_IP}"
+        fi
+    else
+        grep -q "^ALLOWED_HOSTS=" "${ENV_FILE}" || echo "ALLOWED_HOSTS=localhost,127.0.0.1" >> "${ENV_FILE}"
+    fi
+    
     chmod 600 "${ENV_FILE}"
     sudo chown ubuntu:ubuntu "${ENV_FILE}"
     echo "✅ .env updated (existing values preserved)."
@@ -135,13 +187,21 @@ fi
 # --- Step 7: Migrations & Static Files ---
 echo "🗄️  Running Django migrations and collectstatic..."
 export DJANGO_SETTINGS_MODULE="${DJANGO_SETTINGS_MODULE}"
-# Load .env into the current shell temporarily for manage.py calls
+
+# Safer .env loading
 set +u
-# shellcheck disable=SC2046
-export $(grep -v '^#' "${ENV_FILE}" | xargs) || true
+while IFS= read -r line; do
+    # Skip comments and empty lines
+    [[ "$line" =~ ^#.*$ ]] && continue
+    [[ -z "$line" ]] && continue
+    # Export variable
+    export "$line" 2>/dev/null || true
+done < "${ENV_FILE}"
 set -u
 
 mkdir -p "${STATIC_DIR}"
+sudo chown -R ubuntu:www-data "${STATIC_DIR}"
+sudo chmod -R 755 "${STATIC_DIR}"
 python manage.py collectstatic --noinput || true
 python manage.py migrate --noinput || true
 
@@ -190,18 +250,25 @@ if [ -d "${STATIC_DIR}" ]; then
     sudo chmod -R 755 "${STATIC_DIR}"
 fi
 
-# Wait for gunicorn to create socket
+# Wait for gunicorn to create socket with improved error handling
 echo "⏳ Waiting for Gunicorn socket to be created..."
 SOCKET="${PROJECT_DIR}/${PROJECT_NAME}.sock"
-for i in $(seq 1 20); do
-    if [ -S "${SOCKET}" ]; then
-        echo "✅ Socket found: ${SOCKET}"
-        sudo chmod 770 "${SOCKET}"
-        sudo chown ubuntu:www-data "${SOCKET}"
-        break
-    fi
+MAX_WAIT=30
+WAITED=0
+while [ ! -S "${SOCKET}" ] && [ $WAITED -lt $MAX_WAIT ]; do
     sleep 1
+    WAITED=$((WAITED + 1))
 done
+
+if [ ! -S "${SOCKET}" ]; then
+    echo "⚠️  Socket not created after ${MAX_WAIT}s. Checking Gunicorn status..."
+    sudo systemctl status gunicorn --no-pager -l || true
+    echo "⚠️  Continuing, but socket permissions may need manual fix."
+else
+    echo "✅ Socket found: ${SOCKET}"
+    sudo chmod 770 "${SOCKET}"
+    sudo chown ubuntu:www-data "${SOCKET}"
+fi
 
 # --- Step 9: NGINX Setup (server block + proxy headers + IPv4 listen) ---
 echo "🌐 Configuring Nginx site..."
@@ -222,23 +289,17 @@ server {
     }
 
     location / {
-        # Proxy headers for Django (MUST be set BEFORE proxy_pass)
-        # Note: Removed include proxy_params to avoid conflicts and have explicit control
-        proxy_set_header Host $http_host;
+        include proxy_params;
+        proxy_pass http://unix:/home/ubuntu/oneintelligence-backend/oneintelligence-backend.sock;
+
+        # Ensure required headers are set for Django
+        proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header X-Forwarded-Host $host;
-        proxy_set_header X-Forwarded-Port $server_port;
 
-        # Connection settings
-        proxy_redirect off;
-        proxy_buffering off;
         proxy_read_timeout 300;
         proxy_connect_timeout 300;
-
-        # Proxy pass must come after headers
-        proxy_pass http://unix:/home/ubuntu/oneintelligence-backend/oneintelligence-backend.sock;
     }
 
     client_max_body_size 50M;
@@ -247,6 +308,13 @@ NGINX_EOF
 
     # replace placeholder server_name with actual public IP
     sudo sed -i "s/REPLACE_WITH_PUBLIC_IP/${PUBLIC_IP}/g" "${NGINX_CONF}"
+    
+    # Remove default site to prevent conflicts
+    if [ -f /etc/nginx/sites-enabled/default ]; then
+        sudo rm /etc/nginx/sites-enabled/default
+        echo "✅ Removed default Nginx site"
+    fi
+    
     sudo ln -sf "${NGINX_CONF}" /etc/nginx/sites-enabled/
     echo "✅ Nginx site created and enabled."
 else
@@ -256,25 +324,14 @@ else
         sudo sed -i 's/listen 80;/listen 80 default_server;/' "${NGINX_CONF}" || true
     fi
     # Add proxy headers if missing (idempotent)
-    # Remove include proxy_params if present (to avoid conflicts)
-    if grep -q "include proxy_params" "${NGINX_CONF}"; then
-        sudo sed -i '/include proxy_params;/d' "${NGINX_CONF}" || true
-        echo "✅ Removed include proxy_params to avoid header conflicts"
+    if ! grep -q "proxy_set_header Host" "${NGINX_CONF}"; then
+        sudo sed -i '/proxy_pass http:\/\/unix:/a\        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;' "${NGINX_CONF}" || true
     fi
     
-    if ! grep -q "proxy_set_header Host" "${NGINX_CONF}"; then
-        # Insert headers after proxy_pass line
-        sudo sed -i '/proxy_pass http:\/\/unix:/a\
-        # Proxy headers for Django\
-        proxy_set_header Host $http_host;\
-        proxy_set_header X-Real-IP $remote_addr;\
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\
-        proxy_set_header X-Forwarded-Proto $scheme;\
-        proxy_set_header X-Forwarded-Host $host;\
-        proxy_set_header X-Forwarded-Port $server_port;\
-        proxy_redirect off;\
-        proxy_buffering off;' "${NGINX_CONF}" || true
-        echo "✅ Added proxy headers to existing Nginx config"
+    # Remove default site if it exists
+    if [ -f /etc/nginx/sites-enabled/default ]; then
+        sudo rm /etc/nginx/sites-enabled/default
+        echo "✅ Removed default Nginx site"
     fi
 fi
 
@@ -302,7 +359,7 @@ sudo ufw status verbose
 # --- Step 11: Healthcheck & diagnostics ---
 PUBLIC_IP=$(curl -s http://checkip.amazonaws.com || echo "0.0.0.0")
 echo "🎯 Running application health checks (local)..."
-sleep 3
+sleep 5  # Increased wait time for services to stabilize
 HTTP_CODE_LOCAL=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost/api/schema/" --max-time 10 || echo "000")
 HTTP_CODE_EXTERNAL=$(curl -s -o /dev/null -w "%{http_code}" "http://${PUBLIC_IP}/api/schema/" --max-time 10 || echo "000")
 
@@ -315,18 +372,30 @@ if [ "${HTTP_CODE_LOCAL}" = "200" ] || [ "${HTTP_CODE_EXTERNAL}" = "200" ]; then
     echo "   Swagger UI: http://${PUBLIC_IP}/api/schema/swagger-ui/"
 else
     echo "⚠️  Health check did not return 200."
+    echo ""
+    echo "🔍 Troubleshooting steps:"
+    echo "   1. Check Gunicorn: sudo systemctl status gunicorn"
+    echo "   2. Check Nginx: sudo nginx -t && sudo systemctl status nginx"
+    echo "   3. Check logs: sudo journalctl -u gunicorn -n 50"
+    echo "   4. Verify ALLOWED_HOSTS in ${ENV_FILE} includes your IP (no ports)"
+    echo "   5. Check socket permissions: ls -la ${PROJECT_DIR}/${PROJECT_NAME}.sock"
+    echo ""
     echo "   Gunicorn status:"
-    sudo systemctl status gunicorn --no-pager -l
+    sudo systemctl status gunicorn --no-pager -l || true
     echo ""
     echo "   Nginx error tail:"
     sudo tail -n 30 /var/log/nginx/error.log || true
     echo ""
     echo "   Gunicorn journal (last 80 lines):"
     sudo journalctl -u gunicorn -n 80 --no-pager || true
-    echo ""
-    echo "   Check ALLOWED_HOSTS in your settings or .env (do NOT include ports)"
 fi
+
+# Record deployment version
+DEPLOYMENT_VERSION=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+echo "${DEPLOYMENT_VERSION}" > "${PROJECT_DIR}/.deployment_version" 2>/dev/null || true
+echo "📌 Deployment version: ${DEPLOYMENT_VERSION}"
 
 echo "🎉 Deployment script finished!"
 echo "⚠️ Reminder: Validate and update ${ENV_FILE} (ALLOWED_HOSTS, OPENAI_API_KEY, DB_PASSWORD) as needed."
 echo "🌐 Try: http://${PUBLIC_IP}/api/schema/swagger-ui/"
+

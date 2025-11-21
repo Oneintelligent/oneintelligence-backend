@@ -112,6 +112,13 @@ SESSION_COOKIE_HTTPONLY = True
 CSRF_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = 'Lax' if DEBUG else 'None'  # Lax for local, None for cross-domain
 
+# Security: Proxy/Reverse Proxy Settings
+# Required when Django is behind a reverse proxy (Nginx)
+# These settings tell Django to trust the X-Forwarded-* headers from the proxy
+USE_X_FORWARDED_HOST = True  # Trust X-Forwarded-Host header from proxy
+USE_X_FORWARDED_PORT = True  # Trust X-Forwarded-Port header from proxy
+SECURE_PROXY_SSL_HEADER = None  # Set to ('HTTP_X_FORWARDED_PROTO', 'https') when using HTTPS
+
 # ─────────────────────────────────────────
 # App registry (mirrors architecture layers)
 # ─────────────────────────────────────────
