@@ -223,14 +223,16 @@ fi
 sudo chmod -R 755 /home/ubuntu/oneintelligence-backend/static
 
 
-# Restart Gunicorn gracefully (reload if supported, otherwise restart)
+# Restart Gunicorn (Gunicorn doesn't support reload, so we restart)
 if sudo systemctl is-active --quiet gunicorn; then
-    echo "🔄 Reloading Gunicorn..."
-    sudo systemctl reload gunicorn || sudo systemctl restart gunicorn
+    echo "🔄 Restarting Gunicorn..."
+    sudo systemctl restart gunicorn
 else
     echo "🚀 Starting Gunicorn..."
     sudo systemctl start gunicorn
 fi
+# Wait a moment for Gunicorn to fully start
+sleep 2
 echo "🔁 Gunicorn restarted."
 
 # --- Step 9: Nginx Setup (correct socket path + server_name) ---
@@ -299,11 +301,23 @@ echo "✅ Firewall configured safely (SSH, HTTP, HTTPS open)."
 # --- Step 11: Health Check ---
 PUBLIC_IP=$(curl -s http://checkip.amazonaws.com)
 echo "🎯 Checking application health..."
-sleep 2
-if curl -s "http://$PUBLIC_IP" | grep -q "DOCTYPE"; then
-    echo "✅ Application is live at: http://$PUBLIC_IP"
+sleep 3
+# Check if Swagger schema endpoint is accessible (more reliable than root)
+if curl -s -o /dev/null -w "%{http_code}" "http://$PUBLIC_IP/api/schema/" | grep -q "200"; then
+    echo "✅ Application is live and healthy!"
+    echo "   - API Schema: http://$PUBLIC_IP/api/schema/"
+    echo "   - Swagger UI: http://$PUBLIC_IP/api/schema/swagger-ui/"
+elif curl -s -o /dev/null -w "%{http_code}" "http://$PUBLIC_IP/api/schema/" | grep -q "401\|403"; then
+    echo "✅ Application is responding (authentication required - this is normal)"
+    echo "   - Swagger UI: http://$PUBLIC_IP/api/schema/swagger-ui/"
 else
-    echo "⚠️ Application deployed but health check failed. Check Gunicorn/Nginx logs."
+    echo "⚠️  Application deployed but health check failed."
+    echo "   Checking service status..."
+    sudo systemctl status gunicorn --no-pager -l | head -10
+    echo ""
+    echo "   Check logs with:"
+    echo "   - Gunicorn: sudo journalctl -u gunicorn -n 50"
+    echo "   - Nginx: sudo tail -f /var/log/nginx/error.log"
 fi
 
 echo "🎉 Deployment Complete!"
