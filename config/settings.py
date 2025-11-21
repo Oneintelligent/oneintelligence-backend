@@ -90,18 +90,20 @@ SECURE_BROWSER_XSS_FILTER = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
 
 # Security: Frame options (prevent clickjacking)
-X_FRAME_OPTIONS = 'DENY'
+# Allow SAMEORIGIN for Swagger UI to work properly
+X_FRAME_OPTIONS = 'SAMEORIGIN'
 
 # Security: HSTS (HTTP Strict Transport Security) - only in production
 if not DEBUG:
     SECURE_HSTS_SECONDS = 31536000  # 1 year
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
-    SECURE_SSL_REDIRECT = True  # Redirect HTTP to HTTPS
+    # SECURE_SSL_REDIRECT = True  # Disabled for HTTP access. Enable when HTTPS is configured
 
 # Security: Cookie settings
-SESSION_COOKIE_SECURE = not DEBUG  # HTTPS only in production
-CSRF_COOKIE_SECURE = not DEBUG  # HTTPS only in production
+# Disabled for HTTP access. Enable when HTTPS is configured
+SESSION_COOKIE_SECURE = False  # Set to True when HTTPS is configured
+CSRF_COOKIE_SECURE = False  # Set to True when HTTPS is configured
 SESSION_COOKIE_HTTPONLY = True
 CSRF_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = 'Lax' if DEBUG else 'None'  # Lax for local, None for cross-domain

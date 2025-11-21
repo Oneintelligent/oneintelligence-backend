@@ -51,8 +51,12 @@ if [ ! -d "$PROJECT_DIR" ]; then
 else
     cd "$PROJECT_DIR"
     echo "🔁 Pulling latest changes..."
+    # Check for uncommitted changes
+    if ! git diff-index --quiet HEAD --; then
+        echo "⚠️  Warning: Uncommitted changes detected. Stashing them..."
+        git stash save "Auto-stash before deployment $(date +%Y%m%d_%H%M%S)"
+    fi
     git fetch origin
-    git reset --hard origin/main
     git checkout main
     git pull origin main
 fi
@@ -151,7 +155,11 @@ export DJANGO_SETTINGS_MODULE=$DJANGO_SETTINGS_MODULE
 # Load .env file for this session
 export $(grep -v '^#' "$ENV_FILE" | xargs)
 mkdir -p "$STATIC_DIR"
+
+echo "📦 Collecting static files..."
 python manage.py collectstatic --noinput
+
+echo "🗄️  Running database migrations..."
 python manage.py migrate --noinput
 
 # --- Safe Migration Recheck (handles partial DB schema updates) ---
@@ -215,7 +223,14 @@ fi
 sudo chmod -R 755 /home/ubuntu/oneintelligence-backend/static
 
 
-sudo systemctl restart gunicorn
+# Restart Gunicorn gracefully (reload if supported, otherwise restart)
+if sudo systemctl is-active --quiet gunicorn; then
+    echo "🔄 Reloading Gunicorn..."
+    sudo systemctl reload gunicorn || sudo systemctl restart gunicorn
+else
+    echo "🚀 Starting Gunicorn..."
+    sudo systemctl start gunicorn
+fi
 echo "🔁 Gunicorn restarted."
 
 # --- Step 9: Nginx Setup (correct socket path + server_name) ---
@@ -237,6 +252,10 @@ server {
     location / {
         include proxy_params;
         proxy_pass http://unix:$PROJECT_DIR/$PROJECT_NAME.sock;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 
     client_max_body_size 50M;
@@ -258,13 +277,22 @@ echo "🔁 Nginx restarted."
 
 # --- Step 10: Firewall Rules (Safe and Idempotent) ---
 echo "🛡️  Configuring firewall safely..."
-sudo ufw --force reset
-sudo ufw default deny incoming
-sudo ufw default allow outgoing
-sudo ufw allow 22/tcp comment "Allow SSH"
-sudo ufw allow 80/tcp comment "Allow HTTP"
-sudo ufw allow 443/tcp comment "Allow HTTPS"
-sudo ufw --force enable
+# Only reset if explicitly needed (safer approach)
+if ! sudo ufw status | grep -q "Status: active"; then
+    echo "🛡️  Firewall not active, configuring..."
+    sudo ufw default deny incoming
+    sudo ufw default allow outgoing
+    sudo ufw allow 22/tcp comment "Allow SSH"
+    sudo ufw allow 80/tcp comment "Allow HTTP"
+    sudo ufw allow 443/tcp comment "Allow HTTPS"
+    sudo ufw --force enable
+else
+    echo "✅ Firewall already active, ensuring required rules exist..."
+    # Add rules if they don't exist (idempotent)
+    sudo ufw allow 22/tcp comment "Allow SSH" 2>/dev/null || true
+    sudo ufw allow 80/tcp comment "Allow HTTP" 2>/dev/null || true
+    sudo ufw allow 443/tcp comment "Allow HTTPS" 2>/dev/null || true
+fi
 sudo ufw status verbose
 echo "✅ Firewall configured safely (SSH, HTTP, HTTPS open)."
 
