@@ -22,11 +22,20 @@ echo "🌍 Starting deployment for $PROJECT_NAME ..."
 sudo apt update -y && sudo apt upgrade -y
 
 # --- Step 1: Install Required Packages ---
-sudo apt install -y python3 python3-pip python3-venv postgresql postgresql-contrib git curl nginx ufw
+sudo apt install -y python3 python3-pip python3-venv postgresql postgresql-contrib git curl nginx ufw redis-server
 
-# --- Step 2: Setup PostgreSQL ---
+# --- Step 2: Setup PostgreSQL and Redis ---
 sudo systemctl enable postgresql
 sudo systemctl start postgresql
+
+# Setup Redis
+if sudo systemctl is-active --quiet redis-server; then
+    echo "✅ Redis server already running."
+else
+    sudo systemctl enable redis-server
+    sudo systemctl start redis-server
+    echo "✅ Redis server started and enabled."
+fi
 
 # Create DB user if missing
 if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='$DB_USER'" | grep -q 1; then
