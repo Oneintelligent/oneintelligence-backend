@@ -59,9 +59,13 @@ else:
             "LOCATION": REDIS_URL,
             "OPTIONS": {
                 "CLIENT_CLASS": "django_redis.client.DefaultClient",
-                "IGNORE_EXCEPTIONS": True if DEBUG else False,  # Graceful degradation in dev
+                "IGNORE_EXCEPTIONS": True,  # Graceful degradation - don't fail if Redis is temporarily unavailable
                 "SOCKET_CONNECT_TIMEOUT": 5,
                 "SOCKET_TIMEOUT": 5,
+                "CONNECTION_POOL_KWARGS": {
+                    "retry_on_timeout": True,
+                    "health_check_interval": 30,
+                },
             },
             "KEY_PREFIX": "oneintelligence",
             "TIMEOUT": 300,
