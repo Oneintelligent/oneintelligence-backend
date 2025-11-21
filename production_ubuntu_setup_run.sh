@@ -245,13 +245,19 @@ sleep 2
 echo "🔁 Gunicorn restarted."
 
 # --- Step 9: Nginx Setup (correct socket path + server_name) ---
+# Disable default Nginx site if it exists
+if [ -f "/etc/nginx/sites-enabled/default" ]; then
+    echo "🗑️  Removing default Nginx site..."
+    sudo rm -f /etc/nginx/sites-enabled/default
+fi
+
 if [ ! -f "$NGINX_CONF" ]; then
     echo "🌐 Creating Nginx configuration..."
     PUBLIC_IP=$(curl -s http://checkip.amazonaws.com)
     sudo bash -c "cat > $NGINX_CONF" <<EOF
 server {
     listen 80;
-    server_name $PUBLIC_IP;
+    server_name $PUBLIC_IP localhost 127.0.0.1 _;
 
     location /static/ {
         alias $STATIC_DIR/;
@@ -278,7 +284,23 @@ EOF
     sudo ln -sf $NGINX_CONF /etc/nginx/sites-enabled/
     echo "✅ Nginx site configuration created."
 else
-    echo "✅ Nginx configuration already exists — skipping."
+    echo "✅ Nginx configuration already exists."
+    # Update server_name to accept all hostnames if needed
+    if ! grep -q "server_name.*localhost.*127.0.0.1.*_" "$NGINX_CONF" 2>/dev/null; then
+        echo "🔄 Updating Nginx server_name to accept all hostnames..."
+        PUBLIC_IP=$(curl -s http://checkip.amazonaws.com)
+        sudo sed -i "s/server_name.*;/server_name $PUBLIC_IP localhost 127.0.0.1 _;/" "$NGINX_CONF"
+        # Ensure proxy headers are present
+        if ! grep -q "proxy_set_header Host" "$NGINX_CONF" 2>/dev/null; then
+            sudo sed -i '/proxy_pass http:\/\/unix:/a\        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;' "$NGINX_CONF"
+        fi
+        echo "✅ Nginx configuration updated."
+    fi
+    # Ensure default site is disabled
+    if [ -f "/etc/nginx/sites-enabled/default" ]; then
+        echo "🗑️  Removing default Nginx site..."
+        sudo rm -f /etc/nginx/sites-enabled/default
+    fi
 fi
 
 sudo nginx -t && sudo systemctl reload nginx
