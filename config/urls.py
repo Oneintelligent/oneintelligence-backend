@@ -47,10 +47,11 @@ urlpatterns = [
     # Platform services
     # -------------------------
     path("api/v1/", include("app.platform.teams.urls")),
-    path("api/v1/", include("app.platform.modules.urls")),
+    path("api/v1/", include("app.platform.products.urls")),
     path("api/v1/", include("app.platform.licensing.urls")),
     path("api/v1/", include("app.platform.flac.urls")),
     path("api/v1/", include("app.platform.onboarding.urls")),
+    path("api/v1/", include("app.platform.consent.urls")),
     path("api/v1/subscriptions/", include("app.platform.subscriptions.urls")),
 
     # -------------------------

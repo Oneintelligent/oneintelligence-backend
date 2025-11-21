@@ -12,7 +12,9 @@ from .models import Project, ProjectMember
 from .serializers import (
     ProjectSerializer, ProjectCreateSerializer, ProjectMemberSerializer
 )
-from .permissions import can_view_project, can_edit_project, can_delete_project
+from .permissions import can_view_project, can_edit_project, can_delete_project, HasProjectPermission
+from app.platform.rbac.mixins import RBACPermissionMixin
+from app.platform.rbac.constants import Modules, Permissions
 from app.utils.response import api_response
 
 logger = logging.getLogger(__name__)
@@ -26,11 +28,13 @@ logger = logging.getLogger(__name__)
     partial_update=extend_schema(exclude=False),
     destroy=extend_schema(exclude=False),
 )
-class ProjectViewSet(viewsets.ViewSet):
+class ProjectViewSet(viewsets.ViewSet, RBACPermissionMixin):
     """
     Projects — Action-Oriented Interface (AOI) ViewSet
+    Enterprise-grade RBAC integration
     """
     permission_classes = [IsAuthenticated]
+    module = Modules.PROJECTS
 
     def _handle_exception(self, exc: Exception, where: str = ""):
         logger.exception("%s: %s", where, str(exc))
@@ -46,17 +50,17 @@ class ProjectViewSet(viewsets.ViewSet):
     def list(self, request):
         try:
             user = request.user
-            qs = Project.objects.filter(company_id=user.company_id).select_related("owner", "team")
-
-            # Filter by visibility and membership
-            conditions = Q(owner_id=user.userId) | Q(members__user=user)
-            conditions = conditions | Q(visibility="company")
-            if user.team_id:
-                conditions = conditions | Q(team_id=user.team_id, visibility="team")
-            if Q(visibility="shared", shared_with__contains=[str(user.userId)]):
-                conditions = conditions | Q(visibility="shared", shared_with__contains=[str(user.userId)])
             
-            qs = qs.filter(conditions).distinct()
+            # Check permission using RBAC
+            if not self.check_permission(user, Permissions.VIEW):
+                return self.get_permission_denied_response("You don't have permission to view projects")
+            
+            # Filter by permissions using RBAC mixin
+            qs = Project.objects.filter(company_id=user.company_id).select_related("owner", "team")
+            qs = self.filter_queryset_by_permissions(qs, user)
+            
+            # Also include projects where user is a member
+            qs = qs | Project.objects.filter(company_id=user.company_id, members__user=user).distinct()
 
             # Search
             qtext = request.query_params.get("q")
@@ -93,8 +97,8 @@ class ProjectViewSet(viewsets.ViewSet):
     def retrieve(self, request, pk=None):
         try:
             project = get_object_or_404(Project.objects.select_related("owner", "team"), project_id=pk)
-            if not can_view_project(request.user, project):
-                return api_response(403, "failure", {}, "FORBIDDEN", "You don't have access to this project")
+            if not self.check_record_access(request.user, project, action="view"):
+                return self.get_permission_denied_response("You don't have access to this project")
             
             serializer = ProjectSerializer(project, context={"request": request})
             return api_response(200, "success", serializer.data)

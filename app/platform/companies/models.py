@@ -45,6 +45,7 @@ class Company(models.Model):
 
     LIFECYCLE_STATES = [
         ("signup", "Signup"),
+        ("setup_in_progress", "Setup In Progress"),
         ("onboarding", "Onboarding"),
         ("trial", "Trial"),
         ("active", "Active"),
@@ -68,7 +69,7 @@ class Company(models.Model):
     workspace_limit = models.IntegerField(default=5)
     storage_limit_mb = models.IntegerField(default=500)
 
-    # Product modules (JSON list)
+    # Enabled products/modules (JSON list of module codes)
     products = models.JSONField(default=list, blank=True)
 
     # AI settings
@@ -95,6 +96,9 @@ class Company(models.Model):
 
     sso_enabled = models.BooleanField(default=False)
     audit_logging_enabled = models.BooleanField(default=False)
+    
+    # Metadata field for storing additional configuration (FLAC, etc.)
+    metadata = models.JSONField(default=dict, blank=True)
 
     class Meta:
         db_table = "companies_company"

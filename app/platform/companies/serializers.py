@@ -123,6 +123,19 @@ class CompanySerializer(serializers.ModelSerializer):
                     role=role,
                     status=User.Status.PENDING,  # invited, not active
                 )
+                
+                # Assign RBAC role
+                from app.platform.rbac.helpers import assign_role_to_user
+                from app.platform.rbac.constants import CustomerRoles
+                
+                role_mapping = {
+                    "SuperAdmin": CustomerRoles.SUPER_ADMIN.value,
+                    "Admin": CustomerRoles.ADMIN.value,
+                    "User": CustomerRoles.MEMBER.value,
+                }
+                role_code = role_mapping.get(role, CustomerRoles.MEMBER.value)
+                assign_role_to_user(user, role_code, company=company, assigned_by=self.context.get("request").user if self.context.get("request") else None)
+                
                 # Note: invite token email workflow happens in the view, not here.
                 continue
 
@@ -131,6 +144,30 @@ class CompanySerializer(serializers.ModelSerializer):
             # --------------------------------------------
             user.first_name = first_name or user.first_name
             user.last_name = last_name or user.last_name
+            role_changed = user.role != role
             user.role = role
             user.company = company
             user.save(update_fields=["first_name", "last_name", "role", "company"])
+            
+            # Update RBAC role if changed
+            if role_changed:
+                from app.platform.rbac.helpers import assign_role_to_user
+                from app.platform.rbac.models import UserRole
+                from app.platform.rbac.constants import CustomerRoles
+                
+                # Remove old customer roles for this company
+                UserRole.objects.filter(
+                    user=user,
+                    company=company,
+                    role__role_type__in=['customer', 'platform'],
+                    is_active=True
+                ).update(is_active=False)
+                
+                # Assign new role
+                role_mapping = {
+                    "SuperAdmin": CustomerRoles.SUPER_ADMIN.value,
+                    "Admin": CustomerRoles.ADMIN.value,
+                    "User": CustomerRoles.MEMBER.value,
+                }
+                role_code = role_mapping.get(role, CustomerRoles.MEMBER.value)
+                assign_role_to_user(user, role_code, company=company, assigned_by=self.context.get("request").user if self.context.get("request") else None)

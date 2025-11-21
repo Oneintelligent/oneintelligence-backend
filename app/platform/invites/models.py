@@ -28,3 +28,29 @@ class InviteToken(models.Model):
     def mark_used(self):
         self.used = True
         self.save(update_fields=["used"])
+
+    @classmethod
+    def create_for_user(cls, user, inviter_user_id=None, companyId=None, days_valid: int = 7):
+        """
+        Create an invite token for an existing user.
+        Convenience method that extracts email from user object.
+        """
+        return cls.objects.create(
+            invited_user_email=user.email.lower().strip(),
+            invited_user_id=user.userId,
+            inviter_user_id=inviter_user_id,
+            companyId=companyId,
+            expires_at=timezone.now() + timedelta(days=days_valid)
+        )
+
+    @classmethod
+    def create_for_email(cls, email: str, inviter_user_id=None, companyId=None, days_valid: int = 7):
+        """
+        Create an invite token for an email address (user may not exist yet).
+        """
+        return cls.objects.create(
+            invited_user_email=email.strip().lower(),
+            inviter_user_id=inviter_user_id,
+            companyId=companyId,
+            expires_at=timezone.now() + timedelta(days=days_valid)
+        )

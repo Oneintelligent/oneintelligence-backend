@@ -1,43 +1,57 @@
-# app/workspace/projects/permissions.py
+"""
+Projects Module Permissions - RBAC Integration
+Enterprise-grade permission checking for Projects module
+"""
+
+import logging
+from rest_framework.permissions import BasePermission
 from django.db.models import Q
+
+from app.platform.rbac.utils import (
+    has_module_permission,
+    can_view_record,
+    can_edit_record,
+    can_delete_record,
+    is_platform_admin,
+)
+from app.platform.rbac.constants import Modules, Permissions
 from .models import Project, ProjectMember
+
+logger = logging.getLogger(__name__)
 
 
 def can_view_project(user, project):
-    """Check if user can view a project."""
-    # Platform admins can view all
-    if hasattr(user, "role") and user.role in ["PlatformAdmin", "SuperAdmin"]:
-        return True
-    
-    # Must be in same company
-    if project.company_id != user.company_id:
+    """
+    Check if user can view a project using RBAC system.
+    """
+    if not user or not hasattr(user, 'is_authenticated') or not user.is_authenticated:
         return False
     
-    # Owner can always view
-    if project.owner_id == user.userId:
+    # Platform admins can view all
+    if is_platform_admin(user):
         return True
     
-    # Check if user is a member
-    if ProjectMember.objects.filter(project=project, user=user).exists():
-        return True
+    # Use RBAC system
+    can_view = can_view_record(user, project, module=Modules.PROJECTS)
     
-    # Check visibility and sharing
-    if project.visibility == "company":
-        return True
+    # Additional check: project members can always view
+    if not can_view:
+        if ProjectMember.objects.filter(project=project, user=user).exists():
+            return True
     
-    if project.visibility == "team" and project.team_id and user.team_id == project.team_id:
-        return True
-    
-    if project.visibility == "shared" and str(user.userId) in project.shared_with:
-        return True
-    
-    return False
+    return can_view
 
 
 def can_edit_project(user, project):
-    """Check if user can edit a project."""
+    """
+    Check if user can edit a project using RBAC system.
+    """
     if not can_view_project(user, project):
         return False
+    
+    # Platform admins can edit all
+    if is_platform_admin(user):
+        return True
     
     # Owner can always edit
     if project.owner_id == user.userId:
@@ -48,14 +62,43 @@ def can_edit_project(user, project):
     if member and member.role in ["owner", "manager"]:
         return True
     
-    return False
+    # Use RBAC system
+    return can_edit_record(user, project, module=Modules.PROJECTS)
 
 
 def can_delete_project(user, project):
-    """Check if user can delete a project."""
-    # Only owner or platform admin
-    if hasattr(user, "role") and user.role in ["PlatformAdmin", "SuperAdmin"]:
+    """
+    Check if user can delete a project using RBAC system.
+    """
+    if not can_view_project(user, project):
+        return False
+    
+    # Platform admins can delete all
+    if is_platform_admin(user):
         return True
     
-    return project.owner_id == user.userId
+    # Only owner can delete
+    if project.owner_id == user.userId:
+        return True
+    
+    # Use RBAC system
+    return can_delete_record(user, project, module=Modules.PROJECTS)
 
+
+class HasProjectPermission(BasePermission):
+    """
+    DRF permission class for projects module permissions.
+    """
+    
+    def __init__(self, permission: Permissions):
+        self.permission = permission
+    
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        
+        if is_platform_admin(request.user):
+            return True
+        
+        company = getattr(request.user, 'company', None)
+        return has_module_permission(request.user, Modules.PROJECTS, self.permission, company=company)

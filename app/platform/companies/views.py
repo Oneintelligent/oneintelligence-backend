@@ -89,6 +89,10 @@ class CompanyAOIViewSet(viewsets.ViewSet):
             user.company = company
             user.status = User.Status.ACTIVE
             user.save(update_fields=["company", "status", "last_updated_date"])
+            
+            # Assign Super Admin role via RBAC
+            from app.platform.rbac.helpers import assign_super_admin_role
+            assign_super_admin_role(user, company, assigned_by=user)
 
             return api_response(200, "success", CompanySerializer(company).data)
 
@@ -118,10 +122,10 @@ class CompanyAOIViewSet(viewsets.ViewSet):
                 )
 
             # security: only members or platform admins may view
-            if request.user.company != company and request.user.role not in [
-                User.Role.PLATFORMADMIN,
-                User.Role.SUPERADMIN,
-            ]:
+            from app.platform.rbac.utils import is_platform_admin, is_super_admin
+            if request.user.company != company and not (
+                is_platform_admin(request.user) or is_super_admin(request.user, company=company)
+            ):
                 return api_response(
                     403, "failure", {}, "FORBIDDEN", "Access denied."
                 )
@@ -152,10 +156,10 @@ class CompanyAOIViewSet(viewsets.ViewSet):
                 )
 
             # security: ensure user belongs to this company or is platform admin
-            if user.company != company and user.role not in [
-                User.Role.PLATFORMADMIN,
-                User.Role.SUPERADMIN,
-            ]:
+            from app.platform.rbac.utils import is_platform_admin, is_super_admin
+            if user.company != company and not (
+                is_platform_admin(user) or is_super_admin(user, company=company)
+            ):
                 return api_response(
                     403, "failure", {}, "FORBIDDEN", "You cannot update this company."
                 )

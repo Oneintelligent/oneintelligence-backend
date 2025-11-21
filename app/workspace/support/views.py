@@ -14,7 +14,9 @@ from .models import Ticket, TicketComment, TicketAttachment
 from .serializers import (
     TicketSerializer, TicketCommentSerializer, TicketAttachmentSerializer
 )
-from .permissions import can_view_ticket, can_edit_ticket, can_delete_ticket
+from .permissions import can_view_ticket, can_edit_ticket, can_delete_ticket, HasSupportPermission
+from app.platform.rbac.mixins import RBACPermissionMixin
+from app.platform.rbac.constants import Modules, Permissions
 from app.utils.response import api_response
 
 logger = logging.getLogger(__name__)
@@ -32,11 +34,13 @@ MAX_PAGE_SIZE = 500
     partial_update=extend_schema(exclude=False),
     destroy=extend_schema(exclude=False),
 )
-class TicketViewSet(viewsets.ViewSet):
+class TicketViewSet(viewsets.ViewSet, RBACPermissionMixin):
     """
     Tickets — Action-Oriented Interface (AOI) ViewSet
+    Enterprise-grade RBAC integration
     """
     permission_classes = [IsAuthenticated]
+    module = Modules.SUPPORT
 
     def _handle_exception(self, exc: Exception, where: str = ""):
         logger.exception("%s: %s", where, str(exc))

@@ -96,7 +96,7 @@ class TicketAttachmentSerializer(serializers.ModelSerializer):
 class TicketCommentSerializer(serializers.ModelSerializer):
     author = serializers.SerializerMethodField()
     author_id = serializers.UUIDField(write_only=True, required=False)
-    file_attachments = TicketAttachmentSerializer(many=True, read_only=True, source="file_attachments")
+    file_attachments = TicketAttachmentSerializer(many=True, read_only=True)
     attachments = serializers.JSONField(read_only=True, help_text="Legacy JSON field for attachment references")
     ticket_id = serializers.SerializerMethodField()
 

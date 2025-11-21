@@ -12,7 +12,9 @@ from .models import Task
 from .serializers import (
     TaskSerializer, TaskCreateSerializer, BulkTaskUpdateSerializer
 )
-from .permissions import can_view_task, can_edit_task, can_delete_task
+from .permissions import can_view_task, can_edit_task, can_delete_task, HasTaskPermission
+from app.platform.rbac.mixins import RBACPermissionMixin
+from app.platform.rbac.constants import Modules, Permissions
 from app.utils.response import api_response
 
 logger = logging.getLogger(__name__)
@@ -26,11 +28,13 @@ logger = logging.getLogger(__name__)
     partial_update=extend_schema(exclude=False),
     destroy=extend_schema(exclude=False),
 )
-class TaskViewSet(viewsets.ViewSet):
+class TaskViewSet(viewsets.ViewSet, RBACPermissionMixin):
     """
     Tasks — Action-Oriented Interface (AOI) ViewSet
+    Enterprise-grade RBAC integration
     """
     permission_classes = [IsAuthenticated]
+    module = Modules.TASKS
 
     def _handle_exception(self, exc: Exception, where: str = ""):
         logger.exception("%s: %s", where, str(exc))
@@ -46,16 +50,14 @@ class TaskViewSet(viewsets.ViewSet):
     def list(self, request):
         try:
             user = request.user
-            qs = Task.objects.filter(company_id=user.company_id).select_related("owner", "assignee", "project", "team")
-
-            # Filter by visibility and assignment
-            conditions = Q(owner_id=user.userId) | Q(assignee_id=user.userId)
-            conditions = conditions | Q(visibility="company")
-            if user.team_id:
-                conditions = conditions | Q(team_id=user.team_id, visibility="team")
-            conditions = conditions | Q(visibility="shared", shared_with__contains=[str(user.userId)])
             
-            qs = qs.filter(conditions).distinct()
+            # Check permission using RBAC
+            if not self.check_permission(user, Permissions.VIEW):
+                return self.get_permission_denied_response("You don't have permission to view tasks")
+            
+            # Filter by permissions using RBAC mixin
+            qs = Task.objects.filter(company_id=user.company_id).select_related("owner", "assignee", "project", "team")
+            qs = self.filter_queryset_by_permissions(qs, user)
 
             # Search
             qtext = request.query_params.get("q")

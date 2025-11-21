@@ -13,8 +13,9 @@ from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResp
 from django.core.mail import send_mail
 
 from app.platform.accounts.models import (
-    User, InviteToken, EmailVerificationToken, PasswordResetToken
+    User, EmailVerificationToken, PasswordResetToken
 )
+from app.platform.invites.models import InviteToken
 from app.platform.accounts.serializers import (
     SignUpSerializer,
     SignInSerializer,
@@ -110,6 +111,21 @@ class UserViewSet(viewsets.ViewSet):
 
             with transaction.atomic():
                 user = serializer.save()
+                
+                # Assign RBAC role based on signup role
+                if user.company:
+                    from app.platform.rbac.helpers import assign_role_to_user
+                    from app.platform.rbac.constants import CustomerRoles
+                    
+                    # Map signup role to RBAC role
+                    role_mapping = {
+                        "SuperAdmin": CustomerRoles.SUPER_ADMIN.value,
+                        "Admin": CustomerRoles.ADMIN.value,
+                        "User": CustomerRoles.MEMBER.value,
+                    }
+                    role_code = role_mapping.get(user.role, CustomerRoles.MEMBER.value)
+                    assign_role_to_user(user, role_code, company=user.company, assigned_by=user)
+                
                 # Create email verification token
                 EmailVerificationToken.objects.filter(user=user).delete()
                 verification_token = EmailVerificationToken.create_for_user(user, hours_valid=24)
@@ -384,6 +400,18 @@ class UserViewSet(viewsets.ViewSet):
                 )
                 user.set_unusable_password()
                 user.save()
+                
+                # Assign RBAC role
+                from app.platform.rbac.helpers import assign_role_to_user
+                from app.platform.rbac.constants import CustomerRoles
+                
+                role_mapping = {
+                    "SuperAdmin": CustomerRoles.SUPER_ADMIN.value,
+                    "Admin": CustomerRoles.ADMIN.value,
+                    "User": CustomerRoles.MEMBER.value,
+                }
+                role_code = role_mapping.get(data.get("role", User.Role.USER), CustomerRoles.MEMBER.value)
+                assign_role_to_user(user, role_code, company=company, assigned_by=inviter)
 
             else:
                 # limit hijacking: block if other company
@@ -395,22 +423,46 @@ class UserViewSet(viewsets.ViewSet):
                 user.role = data.get("role", user.role)
                 user.status = User.Status.PENDING
                 user.save()
+                
+                # Update RBAC role
+                from app.platform.rbac.helpers import assign_role_to_user, remove_user_role
+                from app.platform.rbac.constants import CustomerRoles
+                
+                # Remove old roles for this company
+                old_roles = UserRole.objects.filter(user=user, company=company, is_active=True)
+                for old_role in old_roles:
+                    old_role.is_active = False
+                    old_role.save()
+                
+                # Assign new role
+                role_mapping = {
+                    "SuperAdmin": CustomerRoles.SUPER_ADMIN.value,
+                    "Admin": CustomerRoles.ADMIN.value,
+                    "User": CustomerRoles.MEMBER.value,
+                }
+                role_code = role_mapping.get(data.get("role", User.Role.USER), CustomerRoles.MEMBER.value)
+                assign_role_to_user(user, role_code, company=company, assigned_by=inviter)
 
-            # new invite token (delete old)
-            InviteToken.objects.filter(user=user).delete()
-            invite = InviteToken.create_for_user(user)
+            # new invite token (delete old invites for this user)
+            InviteToken.objects.filter(
+                invited_user_email__iexact=user.email,
+                companyId=company.companyId,
+                used=False
+            ).delete()
+            
+            # Create new invite token
+            invite = InviteToken.create_for_user(
+                user=user,
+                inviter_user_id=inviter.userId,
+                companyId=company.companyId
+            )
 
             frontend_url = settings.FRONTEND_BASE
-            invite_link = f"{frontend_url}/auth/set-password?token={invite.token}"
 
-            # best effort email send
+            # Send invite email using Twilio SendGrid (with fallback to Django send_mail)
             try:
-                send_mail(
-                    f"You're invited to {company.name}",
-                    f"Click to join: {invite_link}",
-                    settings.DEFAULT_FROM_EMAIL,
-                    [email],
-                )
+                from app.platform.invites.utils import send_invite_email
+                send_invite_email(invite, invite_link_base=frontend_url, company_name=company.name)
             except Exception:
                 logger.exception("Failed to send invite email")
 
@@ -453,6 +505,8 @@ class UserViewSet(viewsets.ViewSet):
 
             # delegate logic to serializer
             user = serializer.save()
+            
+            # RBAC role already assigned during invite, no need to sync
 
             return api_response(
                 200, "success",
@@ -480,11 +534,36 @@ class UserViewSet(viewsets.ViewSet):
             serializer = TeamMemberUpdateSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
 
+            role_changed = 'role' in serializer.validated_data
+            
             for key, value in serializer.validated_data.items():
                 setattr(user, key, value)
 
             user.last_updated_date = timezone.now()
             user.save()
+            
+            # Update RBAC role if role was changed
+            if role_changed and user.company:
+                from app.platform.rbac.helpers import assign_role_to_user
+                from app.platform.rbac.models import UserRole
+                from app.platform.rbac.constants import CustomerRoles
+                
+                # Remove old customer roles for this company
+                UserRole.objects.filter(
+                    user=user,
+                    company=user.company,
+                    role__role_type__in=['customer', 'platform'],
+                    is_active=True
+                ).update(is_active=False)
+                
+                # Assign new role
+                role_mapping = {
+                    "SuperAdmin": CustomerRoles.SUPER_ADMIN.value,
+                    "Admin": CustomerRoles.ADMIN.value,
+                    "User": CustomerRoles.MEMBER.value,
+                }
+                role_code = role_mapping.get(user.role, CustomerRoles.MEMBER.value)
+                assign_role_to_user(user, role_code, company=user.company, assigned_by=request.user)
 
             return api_response(200, "success", {"user": MiniUserSerializer(user).data})
         except Exception as exc:

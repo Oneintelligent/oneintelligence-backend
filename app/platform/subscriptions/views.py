@@ -82,13 +82,13 @@ class SubscriptionPlanViewSet(viewsets.ViewSet):
                 "name": "Pro",
                 "multiplier": 1.0,
                 "base_prices": {
-                    "1": 999,
-                    "3": 1999,
-                    "5": 2999,
-                    "10": 4999,
-                    "25": 9999,
-                    "50": 17999,
-                    "100": 29999
+                    "1": 9999,
+                    "3": 29997,
+                    "5": 49995,
+                    "10": 99990,
+                    "25": 249975,
+                    "50": 499950,
+                    "100": 999900
                 },
                 "features": [
                     "Core workspace modules",
@@ -98,7 +98,8 @@ class SubscriptionPlanViewSet(viewsets.ViewSet):
                     "Standard integrations"
                 ],
                 "has_trial": True,
-                "trial_days": 14,
+                "trial_days": 90,
+                "trial_requires_card": False,
                 "global_discount_percentage": 0,
                 "status": "Active",
                 "created_date": None,
@@ -107,15 +108,15 @@ class SubscriptionPlanViewSet(viewsets.ViewSet):
             {
                 "id": 2,
                 "name": "MaxPro",
-                "multiplier": 1.5,
+                "multiplier": 1.0,
                 "base_prices": {
-                    "1": 1499,
-                    "3": 2999,
-                    "5": 4499,
-                    "10": 7499,
-                    "25": 14999,
-                    "50": 26999,
-                    "100": 44999
+                    "1": 14999,
+                    "3": 44997,
+                    "5": 74995,
+                    "10": 149990,
+                    "25": 374975,
+                    "50": 749950,
+                    "100": 1499900
                 },
                 "features": [
                     "All Pro features",
@@ -127,7 +128,8 @@ class SubscriptionPlanViewSet(viewsets.ViewSet):
                     "Advanced analytics"
                 ],
                 "has_trial": True,
-                "trial_days": 30,
+                "trial_days": 90,
+                "trial_requires_card": False,
                 "global_discount_percentage": 0,
                 "status": "Active",
                 "created_date": None,
@@ -136,15 +138,15 @@ class SubscriptionPlanViewSet(viewsets.ViewSet):
             {
                 "id": 3,
                 "name": "Ultra",
-                "multiplier": 4.0,
+                "multiplier": 1.0,
                 "base_prices": {
-                    "1": 3999,
-                    "3": 7999,
-                    "5": 11999,
-                    "10": 19999,
-                    "25": 39999,
-                    "50": 71999,
-                    "100": 119999
+                    "1": 49999,
+                    "3": 149997,
+                    "5": 249995,
+                    "10": 499990,
+                    "25": 1249975,
+                    "50": 2499950,
+                    "100": 4999900
                 },
                 "features": [
                     "All MaxPro features",
@@ -158,10 +160,12 @@ class SubscriptionPlanViewSet(viewsets.ViewSet):
                     "Custom branding",
                     "Dedicated account manager"
                 ],
-                "has_trial": True,
-                "trial_days": 90,
+                "has_trial": False,
+                "trial_days": 0,
+                "trial_requires_card": True,
                 "global_discount_percentage": 0,
-                "status": "Active",
+                "status": "Coming Soon",
+                "coming_soon": True,
                 "created_date": None,
                 "last_updated_date": None
             }

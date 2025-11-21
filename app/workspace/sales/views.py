@@ -21,8 +21,11 @@ from .serializers import (
     ActivitySerializer, ActivityCreateSerializer
 )
 from .permissions import (
-    IsSalesRecordVisible, can_view_sales_record, is_sales_role
+    IsSalesRecordVisible, can_view_sales_record, can_edit_sales_record, can_delete_sales_record, is_sales_role, HasSalesPermission
 )
+from app.platform.rbac.mixins import RBACPermissionMixin
+from app.platform.rbac.constants import Modules, Permissions
+from app.platform.rbac.utils import has_module_permission, is_platform_admin
 from .ai_utils import get_recommendation
 
 from app.utils.response import api_response
@@ -41,11 +44,13 @@ logger = logging.getLogger(__name__)
     partial_update=extend_schema(exclude=False),
     destroy=extend_schema(exclude=False),
 )
-class AccountViewSet(viewsets.ViewSet):
+class AccountViewSet(viewsets.ViewSet, RBACPermissionMixin):
     """
     Accounts — standard AOI style ViewSet (list, retrieve, create, update, delete)
+    Enterprise-grade RBAC integration
     """
     permission_classes = [IsAuthenticated]
+    module = Modules.SALES
 
     def _handle_exception(self, exc: Exception, where: str = ""):
         logger.exception("%s: %s", where, str(exc))
@@ -61,15 +66,14 @@ class AccountViewSet(viewsets.ViewSet):
     def list(self, request):
         try:
             user = request.user
+            
+            # Check permission using RBAC
+            if not self.check_permission(user, Permissions.VIEW):
+                return self.get_permission_denied_response("You don't have permission to view accounts")
+            
+            # Filter by permissions using RBAC mixin
             qs = Account.objects.filter(company_id=user.company_id)
-
-            # default scoping: owner, shared, team, company(for sales roles)
-            conditions = Q(owner_id=user.userId) | Q(shared_with__contains=[str(user.userId)])
-            if getattr(user, "team_id", None):
-                conditions = conditions | Q(team_id=getattr(user, "team_id"))
-            if is_sales_role(user):
-                conditions = conditions | Q(visibility="company")
-            qs = qs.filter(conditions)
+            qs = self.filter_queryset_by_permissions(qs, user)
 
             qtext = request.query_params.get("q")
             if qtext:
@@ -85,8 +89,8 @@ class AccountViewSet(viewsets.ViewSet):
     def retrieve(self, request, pk=None):
         try:
             account = get_object_or_404(Account, account_id=pk)
-            if not can_view_sales_record(request.user, account):
-                return api_response(403, "failure", {}, "FORBIDDEN", "You don't have access to this account")
+            if not self.check_record_access(request.user, account, action="view"):
+                return self.get_permission_denied_response("You don't have access to this account")
             serializer = AccountSerializer(account)
             return api_response(200, "success", serializer.data)
         except Exception as exc:
@@ -96,6 +100,10 @@ class AccountViewSet(viewsets.ViewSet):
     @transaction.atomic
     def create(self, request):
         try:
+            # Check permission using RBAC
+            if not self.check_permission(request.user, Permissions.CREATE):
+                return self.get_permission_denied_response("You don't have permission to create accounts")
+            
             serializer = AccountSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
             # NOTE: Account model does not have `created_by` in your schema shown earlier.
@@ -109,8 +117,8 @@ class AccountViewSet(viewsets.ViewSet):
     def update(self, request, pk=None):
         try:
             account = get_object_or_404(Account, account_id=pk)
-            if not can_view_sales_record(request.user, account):
-                return api_response(403, "failure", {}, "FORBIDDEN", "You don't have access to this account")
+            if not self.check_record_access(request.user, account, action="edit"):
+                return self.get_permission_denied_response("You don't have permission to edit this account")
             serializer = AccountSerializer(account, data=request.data)
             serializer.is_valid(raise_exception=True)
             serializer.save()
@@ -123,8 +131,8 @@ class AccountViewSet(viewsets.ViewSet):
     def partial_update(self, request, pk=None):
         try:
             account = get_object_or_404(Account, account_id=pk)
-            if not can_view_sales_record(request.user, account):
-                return api_response(403, "failure", {}, "FORBIDDEN", "You don't have access to this account")
+            if not self.check_record_access(request.user, account, action="edit"):
+                return self.get_permission_denied_response("You don't have permission to edit this account")
             serializer = AccountSerializer(account, data=request.data, partial=True)
             serializer.is_valid(raise_exception=True)
             serializer.save()
@@ -137,8 +145,8 @@ class AccountViewSet(viewsets.ViewSet):
     def destroy(self, request, pk=None):
         try:
             account = get_object_or_404(Account, account_id=pk)
-            if not can_view_sales_record(request.user, account):
-                return api_response(403, "failure", {}, "FORBIDDEN", "You don't have access to this account")
+            if not self.check_record_access(request.user, account, action="delete"):
+                return self.get_permission_denied_response("You don't have permission to delete this account")
             account.delete()
             return api_response(200, "success", {"message": "Account deleted"})
         except Exception as exc:
@@ -154,11 +162,13 @@ class AccountViewSet(viewsets.ViewSet):
     partial_update=extend_schema(exclude=False),
     destroy=extend_schema(exclude=False),
 )
-class LeadViewSet(viewsets.ViewSet):
+class LeadViewSet(viewsets.ViewSet, RBACPermissionMixin):
     """
     Leads — standardized AOI-style ViewSet
+    Enterprise-grade RBAC integration
     """
     permission_classes = [IsAuthenticated, IsSalesRecordVisible]
+    module = Modules.SALES
 
     def _handle_exception(self, exc: Exception, where: str = ""):
         logger.exception("%s: %s", where, str(exc))
@@ -174,13 +184,14 @@ class LeadViewSet(viewsets.ViewSet):
     def list(self, request):
         try:
             user = request.user
+            
+            # Check permission using RBAC
+            if not self.check_permission(user, Permissions.VIEW):
+                return self.get_permission_denied_response("You don't have permission to view leads")
+            
+            # Filter by permissions using RBAC mixin
             qs = Lead.objects.filter(company_id=user.company_id)
-            conditions = Q(owner_id=user.userId) | Q(shared_with__contains=[str(user.userId)])
-            if getattr(user, "team_id", None):
-                conditions = conditions | Q(team_id=getattr(user, "team_id"))
-            if is_sales_role(user):
-                conditions = conditions | Q(visibility="company")
-            qs = qs.filter(conditions)
+            qs = self.filter_queryset_by_permissions(qs, user)
 
             status_q = request.query_params.get("status")
             qtext = request.query_params.get("q")
@@ -204,8 +215,8 @@ class LeadViewSet(viewsets.ViewSet):
     def retrieve(self, request, pk=None):
         try:
             lead = get_object_or_404(Lead, lead_id=pk)
-            if not can_view_sales_record(request.user, lead):
-                return api_response(403, "failure", {}, "FORBIDDEN", "You don't have access to this lead")
+            if not self.check_record_access(request.user, lead, action="view"):
+                return self.get_permission_denied_response("You don't have access to this lead")
             serializer = LeadSerializer(lead)
             return api_response(200, "success", serializer.data)
         except Exception as exc:
@@ -216,6 +227,11 @@ class LeadViewSet(viewsets.ViewSet):
     def create(self, request):
         try:
             user = request.user
+            
+            # Check permission using RBAC
+            if not self.check_permission(user, Permissions.CREATE):
+                return self.get_permission_denied_response("You don't have permission to create leads")
+            
             serializer = LeadCreateSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
 
@@ -227,9 +243,13 @@ class LeadViewSet(viewsets.ViewSet):
 
             # prevent assign to non-sales (optional)
             owner_obj = serializer.validated_data.get("owner", user)
-            # if owner provided and is a Guest, block (simple rule)
-            if owner_obj and getattr(owner_obj, "role", None) == "Guest":
-                return api_response(400, "failure", {}, "INVALID_OWNER", "Guest users cannot own leads")
+            # Check if owner has sales permissions using RBAC
+            if owner_obj:
+                from app.platform.rbac.utils import has_module_permission
+                from app.platform.rbac.constants import Modules, Permissions
+                company = getattr(owner_obj, 'company', None)
+                if not has_module_permission(owner_obj, Modules.SALES, Permissions.VIEW, company=company):
+                    return api_response(400, "failure", {}, "INVALID_OWNER", "User does not have sales permissions")
 
             lead = serializer.save(
                 company_id=user.company_id,
@@ -428,8 +448,13 @@ class OpportunityViewSet(viewsets.ViewSet):
             serializer.is_valid(raise_exception=True)
 
             owner_obj = serializer.validated_data.get("owner", user)
-            if owner_obj and getattr(owner_obj, "role", None) == "Guest":
-                return api_response(400, "failure", {}, "INVALID_OWNER", "Guest users cannot own opportunities")
+            # Check if owner has sales permissions using RBAC
+            if owner_obj:
+                from app.platform.rbac.utils import has_module_permission
+                from app.platform.rbac.constants import Modules, Permissions
+                company = getattr(owner_obj, 'company', None)
+                if not has_module_permission(owner_obj, Modules.SALES, Permissions.VIEW, company=company):
+                    return api_response(400, "failure", {}, "INVALID_OWNER", "User does not have sales permissions")
 
             opp = serializer.save(company_id=user.company_id, owner=owner_obj or user, team=getattr(owner_obj, "team", getattr(user, "team", None)))
             return api_response(201, "success", OpportunitySerializer(opp).data)

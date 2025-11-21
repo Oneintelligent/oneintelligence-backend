@@ -9,15 +9,20 @@ from rest_framework.permissions import IsAuthenticated
 from drf_spectacular.utils import extend_schema
 
 from app.utils.response import api_response
+from app.platform.rbac.mixins import RBACPermissionMixin
+from app.platform.rbac.constants import Modules, Permissions
+from app.platform.rbac.utils import has_module_permission, is_platform_admin
 
 logger = logging.getLogger(__name__)
 
 
-class DashboardViewSet(viewsets.ViewSet):
+class DashboardViewSet(viewsets.ViewSet, RBACPermissionMixin):
     """
     Dashboard — Aggregated data endpoints
+    Enterprise-grade RBAC integration
     """
     permission_classes = [IsAuthenticated]
+    module = Modules.DASHBOARD
 
     def _handle_exception(self, exc: Exception, where: str = ""):
         logger.exception("%s: %s", where, str(exc))
@@ -41,6 +46,11 @@ class DashboardViewSet(viewsets.ViewSet):
         """
         try:
             user = request.user
+            
+            # Check permission using RBAC
+            if not self.check_permission(user, Permissions.VIEW_ANALYTICS):
+                return self.get_permission_denied_response("You don't have permission to view dashboard analytics")
+            
             company_id = user.company_id
 
             # Projects summary

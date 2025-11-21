@@ -6,7 +6,8 @@ from rest_framework import serializers
 from django.utils import timezone
 from django.conf import settings
 
-from app.platform.accounts.models import User, InviteToken
+from app.platform.accounts.models import User
+from app.platform.invites.models import InviteToken
 from app.platform.companies.models import Company
 
 
@@ -124,6 +125,20 @@ class SignUpSerializer(serializers.ModelSerializer):
             password=make_password(raw_pwd),
             status=User.Status.ACTIVE,
         )
+        
+        # Assign RBAC role
+        if company:
+            from app.platform.rbac.helpers import assign_role_to_user
+            from app.platform.rbac.constants import CustomerRoles
+            
+            role_mapping = {
+                "SuperAdmin": CustomerRoles.SUPER_ADMIN.value,
+                "Admin": CustomerRoles.ADMIN.value,
+                "User": CustomerRoles.MEMBER.value,
+            }
+            role_code = role_mapping.get(validated_data.get("role", User.Role.USER), CustomerRoles.MEMBER.value)
+            assign_role_to_user(user, role_code, company=company, assigned_by=user)
+        
         return user
 
 

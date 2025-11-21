@@ -9,7 +9,7 @@ from .base import CoreBaseModel
 
 
 class AuditLog(CoreBaseModel):
-    """Tracks important user actions across modules."""
+    """Tracks important user actions across products."""
 
     actor = models.ForeignKey(
         settings.AUTH_USER_MODEL,

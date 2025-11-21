@@ -192,31 +192,6 @@ class User(AbstractBaseUser, PermissionsMixin):
             self.save(update_fields=["failed_login_attempts"])
 
 
-# -------------------------
-# Invite Token
-# -------------------------
-class InviteToken(models.Model):
-    token = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    # Use settings.AUTH_USER_MODEL to avoid hard import
-    user = models.OneToOneField(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name="invite_token",
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-    expires_at = models.DateTimeField()
-
-    @classmethod
-    def create_for_user(cls, user, days_valid: int = 7):
-        return cls.objects.create(user=user, expires_at=timezone.now() + timedelta(days=days_valid))
-
-    def is_valid(self) -> bool:
-        return timezone.now() <= self.expires_at
-
-    def __str__(self) -> str:
-        return f"InviteToken({getattr(self.user, 'email', str(self.user))})"
-
-
 # ================================================
 # EMAIL VERIFICATION TOKEN
 # ================================================

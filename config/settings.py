@@ -2,6 +2,7 @@
 Django settings for OneIntelligence project.
 """
 import os
+import logging
 
 from pathlib import Path
 from datetime import timedelta
@@ -9,20 +10,66 @@ from datetime import timedelta
 from dotenv import load_dotenv
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 SALES_AI_MODEL = "gpt-4o-mini"  # set to desired model
 SALES_AI_CACHE_TTL = 60 * 60 * 12
-SECRET_KEY = 'django-insecure-placeholder-key'
-DEBUG = True
 
-# Django cache configured to Redis recommended:
-CACHES = {
-    "default": {
-        "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/1"),
-        "OPTIONS": {"CLIENT_CLASS": "django_redis.client.DefaultClient"},
+# Security: SECRET_KEY from environment variable
+SECRET_KEY = os.environ.get('SECRET_KEY')
+if not SECRET_KEY:
+    raise ValueError("SECRET_KEY environment variable must be set. Generate one with: openssl rand -hex 32")
+
+# Security: DEBUG from environment variable (defaults to False for production safety)
+DEBUG = os.environ.get('DEBUG', 'False').lower() == 'true'
+
+# Django cache configuration
+# In development: Uses local memory cache if Redis is not available
+# In production: Uses Redis (must be available)
+REDIS_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/1")
+
+# Check if Redis is available (only in development)
+USE_REDIS = True
+if DEBUG:
+    try:
+        import redis
+        r = redis.from_url(REDIS_URL, socket_connect_timeout=1)
+        r.ping()
+        USE_REDIS = True
+    except Exception as e:
+        USE_REDIS = False
+        logger.warning(f"Redis not available ({type(e).__name__}), using local memory cache for development")
+
+if DEBUG and not USE_REDIS:
+    # Development: Use local memory cache when Redis is not available
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "oneintelligence-cache",
+            "KEY_PREFIX": "oneintelligence",
+            "TIMEOUT": 300,
+        }
     }
-}
+else:
+    # Production or Development with Redis: Use Redis
+    CACHES = {
+        "default": {
+            "BACKEND": "django_redis.cache.RedisCache",
+            "LOCATION": REDIS_URL,
+            "OPTIONS": {
+                "CLIENT_CLASS": "django_redis.client.DefaultClient",
+                "IGNORE_EXCEPTIONS": True if DEBUG else False,  # Graceful degradation in dev
+                "SOCKET_CONNECT_TIMEOUT": 5,
+                "SOCKET_TIMEOUT": 5,
+            },
+            "KEY_PREFIX": "oneintelligence",
+            "TIMEOUT": 300,
+        }
+    }
+    if not DEBUG:
+        # Production: Add compression
+        CACHES["default"]["OPTIONS"]["COMPRESSOR"] = "django_redis.compressors.zlib.ZlibCompressor"
 
 ALLOWED_HOSTS = [
     '192.168.1.9',
@@ -32,7 +79,32 @@ ALLOWED_HOSTS = [
     '3.109.211.100',
     '13.235.73.171',
     '52.66.11.128',
+    '192.168.1.9'
 ]
+
+# ─────────────────────────────────────────
+# Security Headers & Settings
+# ─────────────────────────────────────────
+# Security: Browser XSS protection
+SECURE_BROWSER_XSS_FILTER = True
+SECURE_CONTENT_TYPE_NOSNIFF = True
+
+# Security: Frame options (prevent clickjacking)
+X_FRAME_OPTIONS = 'DENY'
+
+# Security: HSTS (HTTP Strict Transport Security) - only in production
+if not DEBUG:
+    SECURE_HSTS_SECONDS = 31536000  # 1 year
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_SSL_REDIRECT = True  # Redirect HTTP to HTTPS
+
+# Security: Cookie settings
+SESSION_COOKIE_SECURE = not DEBUG  # HTTPS only in production
+CSRF_COOKIE_SECURE = not DEBUG  # HTTPS only in production
+SESSION_COOKIE_HTTPONLY = True
+CSRF_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = 'Lax' if DEBUG else 'None'  # Lax for local, None for cross-domain
 
 # ─────────────────────────────────────────
 # App registry (mirrors architecture layers)
@@ -55,16 +127,18 @@ THIRD_PARTY_APPS = [
 ]
 
 PLATFORM_APPS = [
+    'app.platform.consent',
     'app.core',                      # shared base models + audit/attachments
     'app.platform.accounts',         # auth & user management
     'app.platform.companies',        # org + workspace provisioning
     'app.platform.invites',          # invite tokens + onboarding
     'app.platform.licensing',        # seat buckets + enforcement
-    'app.platform.modules',          # module registry & company enablement
+    'app.platform.products',          # product registry & company enablement
     'app.platform.flac',             # field-level access control
     'app.platform.subscriptions',    # plans, licensing, billing
     'app.platform.teams',            # org structure (teams/departments)
     'app.platform.onboarding',       # onboarding flow management
+    'app.platform.rbac',             # role-based access control
 ]
 
 WORKSPACE_APPS = [
@@ -105,8 +179,9 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:3000",  # Alternative localhost
     "http://192.168.1.9:3000",
     "http://13.235.73.171",
-    "http://52.66.11.128"
-]
+    "http://52.66.11.128",
+    "http://192.168.1.9",
+    ]
 
 # Optional: allow cookies (for CSRF/auth)
 CORS_ALLOW_CREDENTIALS = True
@@ -147,18 +222,45 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'config.wsgi.application'
 
+# Security: Database credentials from environment variables
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'oneintelligence-db',
-        'USER': 'oneintelligence',
-        'PASSWORD': 'Onei@123',
-        'HOST': 'localhost',
-        'PORT': '5432',
+        'NAME': os.environ.get('DB_NAME', 'oneintelligence-db'),
+        'USER': os.environ.get('DB_USER', 'oneintelligence'),
+        'PASSWORD': os.environ.get('DB_PASSWORD'),
+        'HOST': os.environ.get('DB_HOST', 'localhost'),
+        'PORT': os.environ.get('DB_PORT', '5432'),
+        'OPTIONS': {
+            'connect_timeout': 10,
+        },
+        'CONN_MAX_AGE': 600,  # Reuse connections for 10 minutes
     }
 }
 
-AUTH_PASSWORD_VALIDATORS = []
+# Validate critical database credentials in production
+if not DEBUG:
+    if not os.environ.get('DB_PASSWORD'):
+        raise ValueError("DB_PASSWORD environment variable must be set in production")
+
+# Security: Password validators for strong passwords
+AUTH_PASSWORD_VALIDATORS = [
+    {
+        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
+    },
+    {
+        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
+        'OPTIONS': {
+            'min_length': 8,  # Minimum 8 characters
+        }
+    },
+    {
+        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
+    },
+    {
+        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
+    },
+]
 
 LANGUAGE_CODE = 'en-us'
 TIME_ZONE = 'UTC'
@@ -179,6 +281,17 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated',
     ),
     'EXCEPTION_HANDLER': 'app.utils.exception_handler.custom_exception_handler',
+    # Security: API rate limiting
+    # Enabled in both development and production
+    # Uses cache backend (Redis in production, local memory in dev if Redis unavailable)
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '100/hour',  # Anonymous users
+        'user': '1000/hour',  # Authenticated users
+    },
 }
 
 
@@ -248,3 +361,9 @@ DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
 TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
 TWILIO_FROM_NUMBER = os.getenv('TWILIO_FROM_NUMBER')
+
+# Twilio SendGrid (for Email)
+# Note: SendGrid requires a separate API key from your Twilio account
+# Get it from: https://app.sendgrid.com/settings/api_keys
+SENDGRID_API_KEY = os.getenv('SENDGRID_API_KEY')
+SENDGRID_FROM_EMAIL = os.getenv('SENDGRID_FROM_EMAIL', DEFAULT_FROM_EMAIL)

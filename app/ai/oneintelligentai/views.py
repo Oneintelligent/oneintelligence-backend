@@ -28,6 +28,9 @@ from django.contrib.auth import get_user_model
 
 from app.utils.response import api_response
 from rest_framework import status as http_status
+from app.platform.rbac.utils import has_module_permission, is_platform_admin
+from app.platform.rbac.constants import Modules, Permissions
+from app.platform.consent.utils import has_ai_consent
 from .services import (
     InputSanitizer,
     RateLimiter,
@@ -494,6 +497,17 @@ async def chat_api(request):
             user = await sync_to_async(User.objects.get)(userId=user_id)
         except User.DoesNotExist:
             response = JsonResponse({"error": "User not found"}, status=404)
+            response['Access-Control-Allow-Origin'] = request.headers.get('Origin', 'http://localhost:3000')
+            response['Access-Control-Allow-Credentials'] = 'true'
+            return response
+
+        # Check AI consent
+        if not await sync_to_async(has_ai_consent)(user, company=user.company if hasattr(user, 'company') else None):
+            response = JsonResponse({
+                "error": "AI usage consent is required",
+                "error_code": "CONSENT_REQUIRED",
+                "consent_type": "ai_usage"
+            }, status=403)
             response['Access-Control-Allow-Origin'] = request.headers.get('Origin', 'http://localhost:3000')
             response['Access-Control-Allow-Credentials'] = 'true'
             return response
