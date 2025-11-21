@@ -221,15 +221,23 @@ sudo chown -R ubuntu:www-data /home/ubuntu/oneintelligence-backend
 sudo chmod 755 /home/ubuntu
 sudo chmod 755 /home/ubuntu/oneintelligence-backend
 
-# 2️⃣ Gunicorn socket should be group-writeable
-if [ -S "/home/ubuntu/oneintelligence-backend/oneintelligence-backend.sock" ]; then
-    sudo chmod 770 /home/ubuntu/oneintelligence-backend/oneintelligence-backend.sock
+# 2️⃣ Gunicorn socket should be group-writeable (fix permissions every time)
+SOCKET_FILE="/home/ubuntu/oneintelligence-backend/oneintelligence-backend.sock"
+if [ -S "$SOCKET_FILE" ]; then
+    sudo chmod 770 "$SOCKET_FILE"
+    sudo chown ubuntu:www-data "$SOCKET_FILE"
+    echo "✅ Gunicorn socket permissions updated."
 else
     echo "⚠️  Gunicorn socket not found yet — it will be created on first start."
+    # Ensure parent directory has correct permissions for socket creation
+    sudo chmod 755 /home/ubuntu/oneintelligence-backend
+    sudo chown ubuntu:www-data /home/ubuntu/oneintelligence-backend
 fi
 
 # 3️⃣ Static files only need read access
-sudo chmod -R 755 /home/ubuntu/oneintelligence-backend/static
+if [ -d "/home/ubuntu/oneintelligence-backend/static" ]; then
+    sudo chmod -R 755 /home/ubuntu/oneintelligence-backend/static
+fi
 
 
 # Restart Gunicorn (Gunicorn doesn't support reload, so we restart)
