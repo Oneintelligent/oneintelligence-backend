@@ -6,6 +6,7 @@ from drf_spectacular.views import (
     SpectacularSwaggerView,
     SpectacularRedocView,
 )
+from config.schema_view import CustomSpectacularAPIView
 
 from rest_framework.routers import DefaultRouter
 
@@ -72,7 +73,7 @@ urlpatterns = [
     # -------------------------
     # OpenAPI / Swagger / Redoc
     # -------------------------
-    path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
+    path("api/schema/", CustomSpectacularAPIView.as_view(), name="schema"),
     path(
         "api/schema/swagger-ui/",
         SpectacularSwaggerView.as_view(url_name="schema"),
