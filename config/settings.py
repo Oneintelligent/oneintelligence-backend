@@ -181,9 +181,8 @@ MIDDLEWARE = [
 ]
 
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",  # Next.js frontend
-    "http://127.0.0.1:3000",  # Alternative localhost
-    "http://192.168.1.9:3000",
+    "http://localhost",  # Next.js frontend
+    "http://127.0.0.1",  # Alternative localhost
     "http://13.235.73.171",
     "http://52.66.11.128",
     "http://192.168.1.9",
