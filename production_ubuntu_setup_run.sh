@@ -248,8 +248,20 @@ else
     echo "🚀 Starting Gunicorn..."
     sudo systemctl start gunicorn
 fi
-# Wait a moment for Gunicorn to fully start
-sleep 2
+# Wait for Gunicorn to fully start and socket to be created
+echo "⏳ Waiting for Gunicorn to start..."
+for i in {1..10}; do
+    if [ -S "/home/ubuntu/oneintelligence-backend/oneintelligence-backend.sock" ]; then
+        echo "✅ Gunicorn socket is ready."
+        break
+    fi
+    sleep 1
+done
+# Fix socket permissions after Gunicorn creates it
+if [ -S "/home/ubuntu/oneintelligence-backend/oneintelligence-backend.sock" ]; then
+    sudo chmod 770 /home/ubuntu/oneintelligence-backend/oneintelligence-backend.sock
+    sudo chown ubuntu:www-data /home/ubuntu/oneintelligence-backend/oneintelligence-backend.sock
+fi
 echo "🔁 Gunicorn restarted."
 
 # --- Step 9: Nginx Setup (correct socket path + server_name) ---
@@ -264,7 +276,9 @@ if [ ! -f "$NGINX_CONF" ]; then
     PUBLIC_IP=$(curl -s http://checkip.amazonaws.com)
     sudo bash -c "cat > $NGINX_CONF" <<EOF
 server {
-    listen 80;
+    listen 80 default_server;
+    # listen [::]:80 default_server;   # Disable IPv6 if causing issues
+
     server_name $PUBLIC_IP localhost 127.0.0.1 _;
 
     location /static/ {
@@ -277,10 +291,12 @@ server {
     location / {
         include proxy_params;
         proxy_pass http://unix:$PROJECT_DIR/$PROJECT_NAME.sock;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Required headers (sometimes missing in Ubuntu)
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
     }
 
     client_max_body_size 50M;
@@ -293,15 +309,32 @@ EOF
     echo "✅ Nginx site configuration created."
 else
     echo "✅ Nginx configuration already exists."
+    # Update configuration if needed
+    UPDATED=false
+    PUBLIC_IP=$(curl -s http://checkip.amazonaws.com)
+    
     # Update server_name to accept all hostnames if needed
     if ! grep -q "server_name.*localhost.*127.0.0.1.*_" "$NGINX_CONF" 2>/dev/null; then
         echo "🔄 Updating Nginx server_name to accept all hostnames..."
-        PUBLIC_IP=$(curl -s http://checkip.amazonaws.com)
         sudo sed -i "s/server_name.*;/server_name $PUBLIC_IP localhost 127.0.0.1 _;/" "$NGINX_CONF"
-        # Ensure proxy headers are present
-        if ! grep -q "proxy_set_header Host" "$NGINX_CONF" 2>/dev/null; then
-            sudo sed -i '/proxy_pass http:\/\/unix:/a\        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;' "$NGINX_CONF"
-        fi
+        UPDATED=true
+    fi
+    
+    # Add default_server if missing
+    if ! grep -q "listen 80 default_server" "$NGINX_CONF" 2>/dev/null; then
+        echo "🔄 Adding default_server to listen directive..."
+        sudo sed -i 's/listen 80;/listen 80 default_server;/' "$NGINX_CONF"
+        UPDATED=true
+    fi
+    
+    # Ensure proxy headers are present
+    if ! grep -q "proxy_set_header Host" "$NGINX_CONF" 2>/dev/null; then
+        echo "🔄 Adding required proxy headers..."
+        sudo sed -i '/proxy_pass http:\/\/unix:/a\        # Required headers (sometimes missing in Ubuntu)\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;' "$NGINX_CONF"
+        UPDATED=true
+    fi
+    
+    if [ "$UPDATED" = true ]; then
         echo "✅ Nginx configuration updated."
     fi
     # Ensure default site is disabled
@@ -340,23 +373,43 @@ echo "✅ Firewall configured safely (SSH, HTTP, HTTPS open)."
 # --- Step 11: Health Check ---
 PUBLIC_IP=$(curl -s http://checkip.amazonaws.com)
 echo "🎯 Checking application health..."
-sleep 3
+# Wait a bit longer for services to be fully ready
+sleep 5
+
+# Check if socket exists first
+if [ ! -S "/home/ubuntu/oneintelligence-backend/oneintelligence-backend.sock" ]; then
+    echo "⚠️  Gunicorn socket not found. Waiting a bit more..."
+    sleep 5
+fi
+
 # Check if Swagger schema endpoint is accessible (more reliable than root)
-if curl -s -o /dev/null -w "%{http_code}" "http://$PUBLIC_IP/api/schema/" | grep -q "200"; then
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost/api/schema/" --max-time 10)
+if [ "$HTTP_CODE" = "200" ]; then
     echo "✅ Application is live and healthy!"
     echo "   - API Schema: http://$PUBLIC_IP/api/schema/"
     echo "   - Swagger UI: http://$PUBLIC_IP/api/schema/swagger-ui/"
-elif curl -s -o /dev/null -w "%{http_code}" "http://$PUBLIC_IP/api/schema/" | grep -q "401\|403"; then
+elif [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "403" ]; then
     echo "✅ Application is responding (authentication required - this is normal)"
     echo "   - Swagger UI: http://$PUBLIC_IP/api/schema/swagger-ui/"
+elif [ "$HTTP_CODE" = "000" ]; then
+    echo "⚠️  Application deployed but health check failed (connection timeout)."
+    echo "   This might be a temporary issue. Services are running:"
+    sudo systemctl is-active --quiet gunicorn && echo "   ✅ Gunicorn: running" || echo "   ❌ Gunicorn: not running"
+    sudo systemctl is-active --quiet nginx && echo "   ✅ Nginx: running" || echo "   ❌ Nginx: not running"
+    [ -S "/home/ubuntu/oneintelligence-backend/oneintelligence-backend.sock" ] && echo "   ✅ Socket: exists" || echo "   ❌ Socket: missing"
+    echo ""
+    echo "   Try accessing manually:"
+    echo "   - http://$PUBLIC_IP/api/schema/swagger-ui/"
 else
-    echo "⚠️  Application deployed but health check failed."
-    echo "   Checking service status..."
-    sudo systemctl status gunicorn --no-pager -l | head -10
+    echo "⚠️  Application deployed but health check returned HTTP $HTTP_CODE."
+    echo "   Services status:"
+    sudo systemctl is-active --quiet gunicorn && echo "   ✅ Gunicorn: running" || echo "   ❌ Gunicorn: not running"
+    sudo systemctl is-active --quiet nginx && echo "   ✅ Nginx: running" || echo "   ❌ Nginx: not running"
+    [ -S "/home/ubuntu/oneintelligence-backend/oneintelligence-backend.sock" ] && echo "   ✅ Socket: exists" || echo "   ❌ Socket: missing"
     echo ""
     echo "   Check logs with:"
     echo "   - Gunicorn: sudo journalctl -u gunicorn -n 50"
-    echo "   - Nginx: sudo tail -f /var/log/nginx/error.log"
+    echo "   - Nginx: sudo tail -20 /var/log/nginx/error.log"
 fi
 
 echo "🎉 Deployment Complete!"
