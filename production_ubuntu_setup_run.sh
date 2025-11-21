@@ -77,8 +77,40 @@ else
 fi
 echo "✅ Python dependencies installed."
 
-# --- Step 6: Migrations & Static Files ---
+# --- Step 6: Setup Environment Variables (.env file) ---
+ENV_FILE="$PROJECT_DIR/.env"
+if [ ! -f "$ENV_FILE" ]; then
+    echo "🔐 Creating .env file with SECRET_KEY..."
+    # Generate SECRET_KEY
+    SECRET_KEY=$(openssl rand -hex 32)
+    cat > "$ENV_FILE" <<EOF
+SECRET_KEY=$SECRET_KEY
+DEBUG=False
+EOF
+    chmod 600 "$ENV_FILE"
+    chown ubuntu:ubuntu "$ENV_FILE"
+    echo "✅ .env file created with SECRET_KEY"
+else
+    # Ensure SECRET_KEY exists
+    if ! grep -q "^SECRET_KEY=" "$ENV_FILE" 2>/dev/null; then
+        echo "🔐 Adding SECRET_KEY to existing .env file..."
+        SECRET_KEY=$(openssl rand -hex 32)
+        echo "SECRET_KEY=$SECRET_KEY" >> "$ENV_FILE"
+        chmod 600 "$ENV_FILE"
+        echo "✅ SECRET_KEY added to .env file"
+    else
+        echo "✅ SECRET_KEY already exists in .env file"
+    fi
+    # Ensure DEBUG is set
+    if ! grep -q "^DEBUG=" "$ENV_FILE" 2>/dev/null; then
+        echo "DEBUG=False" >> "$ENV_FILE"
+    fi
+fi
+
+# --- Step 7: Migrations & Static Files ---
 export DJANGO_SETTINGS_MODULE=$DJANGO_SETTINGS_MODULE
+# Load .env file for this session
+export $(grep -v '^#' "$ENV_FILE" | xargs)
 mkdir -p "$STATIC_DIR"
 python manage.py collectstatic --noinput
 python manage.py migrate --noinput
@@ -90,7 +122,7 @@ echo "✅ Database schema verified and up-to-date."
 
 echo "✅ Django migrations and static collection complete."
 
-# --- Step 7: Gunicorn Setup (fixed path, UMask, permissions) ---
+# --- Step 8: Gunicorn Setup (fixed path, UMask, permissions) ---
 if [ ! -f "$GUNICORN_SERVICE" ]; then
     echo "⚙️ Creating Gunicorn systemd service..."
     sudo bash -c "cat > $GUNICORN_SERVICE" <<EOF
@@ -104,6 +136,7 @@ Group=www-data
 WorkingDirectory=$PROJECT_DIR
 Environment="DJANGO_SETTINGS_MODULE=$DJANGO_SETTINGS_MODULE"
 Environment="PATH=$PROJECT_DIR/venv/bin"
+EnvironmentFile=$ENV_FILE
 UMask=007
 ExecStart=$PROJECT_DIR/venv/bin/gunicorn \
     --workers 3 \
@@ -146,7 +179,7 @@ sudo chmod -R 755 /home/ubuntu/oneintelligence-backend/static
 sudo systemctl restart gunicorn
 echo "🔁 Gunicorn restarted."
 
-# --- Step 8: Nginx Setup (correct socket path + server_name) ---
+# --- Step 9: Nginx Setup (correct socket path + server_name) ---
 if [ ! -f "$NGINX_CONF" ]; then
     echo "🌐 Creating Nginx configuration..."
     PUBLIC_IP=$(curl -s http://checkip.amazonaws.com)
@@ -184,7 +217,7 @@ sudo systemctl restart nginx
 sudo systemctl enable nginx
 echo "🔁 Nginx restarted."
 
-# --- Step 9: Firewall Rules (Safe and Idempotent) ---
+# --- Step 10: Firewall Rules (Safe and Idempotent) ---
 echo "🛡️  Configuring firewall safely..."
 sudo ufw --force reset
 sudo ufw default deny incoming
@@ -196,7 +229,7 @@ sudo ufw --force enable
 sudo ufw status verbose
 echo "✅ Firewall configured safely (SSH, HTTP, HTTPS open)."
 
-# --- Step 10: Health Check ---
+# --- Step 11: Health Check ---
 PUBLIC_IP=$(curl -s http://checkip.amazonaws.com)
 echo "🎯 Checking application health..."
 sleep 2
