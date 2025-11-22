@@ -188,7 +188,9 @@ MIDDLEWARE = [
 ]
 
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost",  # Next.js frontend
+    "http://localhost:3000",  # Next.js frontend (default port)
+    "http://127.0.0.1:3000",  # Alternative localhost with port
+    "http://localhost",  # Next.js frontend (without port)
     "http://127.0.0.1",  # Alternative localhost
     "http://13.235.73.171",
     "http://52.66.11.128",
@@ -211,6 +213,17 @@ CORS_ALLOW_HEADERS = [
     'user-agent',
     'x-csrftoken',
     'x-requested-with',
+    'x-access-token',  # Custom header for auth
+]
+
+# CORS methods
+CORS_ALLOW_METHODS = [
+    'DELETE',
+    'GET',
+    'OPTIONS',
+    'PATCH',
+    'POST',
+    'PUT',
 ]
 
 

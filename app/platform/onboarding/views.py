@@ -1,6 +1,6 @@
 """
 Onboarding API endpoints for managing the complete onboarding flow:
-1. Signup → 2. Company → 3. Plan → 4. Modules → 5. Team Members
+1. Signup → 2. Company → 3. Plan → 4. Products → 5. Team Members
 
 Enterprise-grade onboarding with RBAC integration.
 """
@@ -152,7 +152,7 @@ class OnboardingViewSet(viewsets.ViewSet):
                 "seats_available": (license_count - self._get_seats_used(company)) if (subscription and company) else 0,
             }
 
-            # Step 4: Products/Modules
+            # Step 4: Products
             products_enabled = []
             if company:
                 company_modules = CompanyModule.objects.filter(
@@ -160,9 +160,9 @@ class OnboardingViewSet(viewsets.ViewSet):
                 ).select_related("module")
                 products_enabled = [cm.module.code for cm in company_modules]
             
-            modules_complete = len(products_enabled) > 0
-            modules_data = {
-                "completed": modules_complete,
+            products_complete = len(products_enabled) > 0
+            products_data = {
+                "completed": products_complete,
                 "enabled_products": products_enabled,
                 "products": products_enabled,  # Primary field name
                 "count": len(products_enabled),
@@ -183,11 +183,54 @@ class OnboardingViewSet(viewsets.ViewSet):
                     roles = get_user_roles(u, company=company)
                     primary_role = get_user_primary_role(u, company=company)
                     
+                    # If no RBAC roles found, use direct role field as fallback
+                    if not roles and u.role:
+                        # Create a role object from the direct role field
+                        role_code = u.role.lower()
+                        # Map User.role to role code
+                        role_mapping = {
+                            "superadmin": "super_admin",
+                            "admin": "admin",
+                            "user": "member",
+                            "member": "member",
+                        }
+                        mapped_code = role_mapping.get(role_code, role_code)
+                        
+                        # Try to get the role from database
+                        from app.platform.rbac.models import Role
+                        fallback_role = Role.objects.filter(code=mapped_code, is_active=True).first()
+                        
+                        if fallback_role:
+                            roles = [fallback_role]
+                            primary_role = fallback_role
+                    
+                    # Always include role and status - get the actual value from the model
+                    # User.role and User.status are CharField with TextChoices
+                    # Access the field value directly - it should be a string
+                    user_role = u.role or None  # Get role value, None if empty/None
+                    user_status = u.status or "Active"  # Get status value, default to "Active"
+                    
+                    # Ensure they are strings (they should already be, but be explicit)
+                    if user_role is not None:
+                        user_role = str(user_role)
+                    if user_status:
+                        user_status = str(user_status)
+                    
+                    # Debug logging to help diagnose issues
+                    logger.debug(
+                        f"Onboarding status - User {u.email}: "
+                        f"role={repr(user_role)}, status={repr(user_status)}, "
+                        f"model.role={repr(u.role)}, model.status={repr(u.status)}"
+                    )
+                    
+                    # Build member data dictionary - explicitly include all fields
                     member_data = {
                         "userId": str(u.userId),
-                        "email": u.email,
-                        "first_name": u.first_name,
-                        "last_name": u.last_name,
+                        "email": str(u.email) if u.email else "",
+                        "first_name": str(u.first_name) if u.first_name else "",
+                        "last_name": str(u.last_name) if u.last_name else "",
+                        "role": user_role,  # Always include - will be None if not set
+                        "status": user_status,  # Always include - defaults to "Active"
                         "roles": [{"code": r.code, "display_name": r.display_name} for r in roles],
                         "primary_role": {
                             "code": primary_role.code,
@@ -268,12 +311,12 @@ class OnboardingViewSet(viewsets.ViewSet):
                         company.name,
                     )
 
-            # Step 10: Workspace readiness snapshot
+            # Step 9: Workspace readiness snapshot
             workspace_ready = company and company.lifecycle_status in ["trial", "active"]
             workspace_data = {
                 "completed": bool(workspace_ready),
                 "lifecycle_status": company.lifecycle_status if company else None,
-                "can_activate": plan_complete and modules_complete,
+                "can_activate": plan_complete and products_complete and team_complete,
                 "products_enabled": company.products if company else [],
             }
 
@@ -282,7 +325,7 @@ class OnboardingViewSet(viewsets.ViewSet):
                 signup_complete,
                 company_complete,
                 plan_complete,
-                modules_complete,
+                products_complete,
                 team_complete,
             ])
             total_steps = 5
@@ -294,8 +337,8 @@ class OnboardingViewSet(viewsets.ViewSet):
                 next_step = "company"
             elif not plan_complete:
                 next_step = "plan"
-            elif not modules_complete:
-                next_step = "modules"
+            elif not products_complete:
+                next_step = "products"
             elif not team_complete:
                 next_step = "team"
             else:
@@ -312,7 +355,7 @@ class OnboardingViewSet(viewsets.ViewSet):
                     "signup": signup_data,
                     "company": company_data,
                     "plan": plan_data,
-                    "modules": modules_data,
+                    "products": products_data,
                     "team": team_data,
                     "special_permission": special_permission_data,
                     "access_control": access_control_data,
@@ -321,7 +364,8 @@ class OnboardingViewSet(viewsets.ViewSet):
                 "can_proceed_to_activation": all([
                     company_complete,
                     plan_complete,
-                    modules_complete,
+                    products_complete,
+                    team_complete,
                 ]),
             }
 
@@ -375,15 +419,15 @@ class OnboardingViewSet(viewsets.ViewSet):
                     "Subscription is required to activate workspace"
                 )
 
-            modules_count = CompanyModule.objects.filter(
+            products_count = CompanyModule.objects.filter(
                 company_id=company.companyId, enabled=True
             ).count()
 
-            if modules_count == 0:
+            if products_count == 0:
                 return api_response(
                     400, "failure", {},
-                    "NO_MODULES",
-                    "At least one module must be enabled to activate workspace"
+                    "NO_PRODUCTS",
+                    "At least one product must be enabled to activate workspace"
                 )
 
             # Activate company

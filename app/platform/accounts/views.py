@@ -460,11 +460,22 @@ class UserViewSet(viewsets.ViewSet):
             frontend_url = settings.FRONTEND_BASE
 
             # Send invite email using Twilio SendGrid (with fallback to Django send_mail)
+            email_sent = False
+            email_error = None
+            email_method = None
             try:
                 from app.platform.invites.utils import send_invite_email
-                send_invite_email(invite, invite_link_base=frontend_url, company_name=company.name)
-            except Exception:
-                logger.exception("Failed to send invite email")
+                email_result = send_invite_email(invite, invite_link_base=frontend_url, company_name=company.name)
+                email_sent = email_result.get("sent", False)
+                email_method = email_result.get("method", "unknown")
+                if not email_sent:
+                    email_error = email_result.get("error", "Unknown error sending email")
+                    logger.warning(f"Failed to send invite email to {user.email}: {email_error}")
+                else:
+                    logger.info(f"Invite email sent successfully to {user.email} via {email_method}")
+            except Exception as e:
+                logger.exception(f"Failed to send invite email to {user.email}: {e}")
+                email_error = str(e)
 
             # Return seat information
             seat_info = {}
@@ -477,13 +488,20 @@ class UserViewSet(viewsets.ViewSet):
                     "seats_total": subscription.license_count,
                 }
 
+            response_data = {
+                "user": MiniUserSerializer(user).data,
+                "invite_token": str(invite.token),
+                "seat_info": seat_info,
+                "email_sent": email_sent,
+                "email_method": email_method,
+            }
+            
+            if email_error:
+                response_data["email_error"] = email_error
+
             return api_response(
                 200, "success",
-                {
-                    "user": MiniUserSerializer(user).data,
-                    "invite_token": str(invite.token),
-                    "seat_info": seat_info,
-                }
+                response_data
             )
         except Exception as exc:
             return self._handle_exception(exc, "invite")
@@ -547,6 +565,8 @@ class UserViewSet(viewsets.ViewSet):
                 from app.platform.rbac.helpers import assign_role_to_user
                 from app.platform.rbac.models import UserRole
                 from app.platform.rbac.constants import CustomerRoles
+                import logging
+                logger = logging.getLogger(__name__)
                 
                 # Remove old customer roles for this company
                 UserRole.objects.filter(
@@ -563,9 +583,44 @@ class UserViewSet(viewsets.ViewSet):
                     "User": CustomerRoles.MEMBER.value,
                 }
                 role_code = role_mapping.get(user.role, CustomerRoles.MEMBER.value)
-                assign_role_to_user(user, role_code, company=user.company, assigned_by=request.user)
+                logger.info(f"Assigning role {role_code} to user {user.email} (status: {user.status})")
+                user_role = assign_role_to_user(user, role_code, company=user.company, assigned_by=request.user)
+                if not user_role:
+                    logger.warning(f"Failed to assign role {role_code} to user {user.email}")
+                else:
+                    logger.info(f"Successfully assigned role {role_code} to user {user.email}")
 
-            return api_response(200, "success", {"user": MiniUserSerializer(user).data})
+            # Return user with roles like onboarding status does
+            from app.platform.rbac.utils import get_user_roles, get_user_primary_role
+            roles = get_user_roles(user, company=user.company)
+            primary_role = get_user_primary_role(user, company=user.company)
+            
+            # If no RBAC roles found, use direct role field as fallback
+            if not roles and user.role and user.company:
+                role_code = user.role.lower()
+                role_mapping = {
+                    "superadmin": "super_admin",
+                    "admin": "admin",
+                    "user": "member",
+                    "member": "member",
+                }
+                mapped_code = role_mapping.get(role_code, role_code)
+                
+                from app.platform.rbac.models import Role
+                fallback_role = Role.objects.filter(code=mapped_code, is_active=True).first()
+                
+                if fallback_role:
+                    roles = [fallback_role]
+                    primary_role = fallback_role
+            
+            user_data = MiniUserSerializer(user).data
+            user_data["roles"] = [{"code": r.code, "display_name": r.display_name} for r in roles]
+            user_data["primary_role"] = {
+                "code": primary_role.code,
+                "display_name": primary_role.display_name
+            } if primary_role else None
+
+            return api_response(200, "success", {"user": user_data})
         except Exception as exc:
             return self._handle_exception(exc, "update_user")
 
